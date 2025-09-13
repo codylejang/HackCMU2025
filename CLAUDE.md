@@ -13,13 +13,113 @@ Open Notebook is an open source, privacy-focused alternative to Google's Noteboo
 - 💬 **Context-Aware Chat**: AI conversations powered by your research materials
 - 🔧 **REST API**: Full programmatic access for custom integrations
 
-## Setup & Usage Commands
+## Installation Guide
+
+### Prerequisites
+
+Before setting up Open Notebook, ensure you have:
+- **Python 3.11+** (recommended: 3.11.13)
+- **Conda** (Anaconda or Miniconda)
+- **Node.js 18+** (for frontend components if applicable)
+- **Git**
+
+### System Dependencies
+
+Install required system tools:
+```bash
+# Install SurrealDB
+brew install surrealdb
+
+# Install UV package manager
+brew install uv
+
+# Install Git (if not already installed)
+brew install git
+```
 
 ### Environment Setup
+
+#### Method 1: Using Exported Environment (Recommended)
+
 ```bash
-# Activate conda environment
+# 1. Clone the repository
+git clone https://github.com/lfnovo/open-notebook
+cd open-notebook
+
+# 2. Create conda environment from exported file
+conda env create -f environment.yml
+
+# 3. Activate the environment
+conda activate open-notebook
+```
+
+#### Method 2: Manual Environment Creation
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/lfnovo/open-notebook
+cd open-notebook
+
+# 2. Create conda environment with Python 3.11
+conda create -n open-notebook python=3.11.13
+
+# 3. Activate the environment
+conda activate open-notebook
+
+# 4. Install the package and dependencies
+pip install -e .
+```
+
+#### Method 3: Quick Activation (if environment already exists)
+
+```bash
+# Activate existing conda environment
 source ~/.bash_profile && conda activate open-notebook
 ```
+
+### Environment Configuration
+
+1. **Create .env file** (copy from .env.example):
+```bash
+cp .env.example .env
+```
+
+2. **Configure essential environment variables**:
+```bash
+# Edit .env file with your preferred editor
+nano .env
+
+# Required configurations:
+SURREAL_URL="ws://localhost:8000/rpc"
+SURREAL_USER="root"
+SURREAL_PASSWORD="root"
+SURREAL_NAMESPACE="open_notebook"
+SURREAL_DATABASE="staging"
+
+# Add your AI provider API keys:
+OPENROUTER_API_KEY="your-openrouter-api-key"
+# or
+OPENAI_API_KEY="your-openai-api-key"
+# or other provider keys...
+```
+
+### Verify Installation
+
+```bash
+# Check Python version
+python --version  # Should show Python 3.11.x
+
+# Check if packages are installed
+python -c "import open_notebook; print('✅ Open Notebook installed successfully')"
+
+# Check UV installation
+uv --version
+
+# Check SurrealDB installation
+surreal version
+```
+
+## Setup & Usage Commands
 
 ### Starting the Application
 
@@ -141,16 +241,74 @@ SURREAL_DATABASE="staging"
 
 ## Troubleshooting
 
-### Common Issues
+### Installation Issues
+
+1. **Conda environment creation fails**:
+   ```bash
+   # Solution: Update conda first
+   conda update conda
+   conda clean --all
+
+   # Then retry environment creation
+   conda env create -f environment.yml
+   ```
+
+2. **Package installation errors**:
+   ```bash
+   # Solution: Clear pip cache and reinstall
+   pip cache purge
+   pip install --no-cache-dir -e .
+   ```
+
+3. **SurrealDB not found**:
+   ```bash
+   # Solution: Install SurrealDB
+   brew install surrealdb
+   # or on Linux:
+   curl --proto '=https' --tlsv1.2 -sSf https://install.surrealdb.com | sh
+   ```
+
+4. **UV command not found**:
+   ```bash
+   # Solution: Install UV
+   brew install uv
+   # or
+   pip install uv
+   ```
+
+5. **Environment variables not loading**:
+   ```bash
+   # Solution: Verify .env file exists and has correct format
+   ls -la .env
+   cat .env | grep SURREAL_URL
+
+   # Ensure no trailing spaces or quotes issues
+   ```
+
+### Runtime Issues
 
 1. **Docker error with `make start-all`**:
    - Install Docker Desktop and ensure it's running
    - Alternative: Use the manual startup commands above
+
 2. **Services not starting**: Check if ports 8000, 5055, and 8502 are available
-3. **Database connection issues**: Ensure SurrealDB is running on port 8000
-4. **API errors**: Check the API logs and ensure all environment variables are set
-5. **Missing dependencies**: Rerun `pip install -e .` in the conda environment
-6. **uv command not found**: Install with `brew install uv`
+
+3. **Database connection issues**:
+   - Ensure SurrealDB is running: `ps aux | grep surreal`
+   - Check correct URL in .env: `SURREAL_URL="ws://localhost:8000/rpc"`
+   - Verify SurrealDB is accessible: `surreal sql --conn ws://localhost:8000 --user root --pass root`
+
+4. **Worker fails to start**:
+   ```bash
+   # Common error: "nodename nor servname provided"
+   # Solution: Fix SURREAL_URL in .env file
+   SURREAL_URL="ws://localhost:8000/rpc"  # Correct
+   # NOT: ws://surrealdb/rpc:8000         # Incorrect
+   ```
+
+5. **API errors**: Check the API logs and ensure all environment variables are set
+
+6. **Missing dependencies after installation**: Rerun `pip install -e .` in the conda environment
 
 ### Useful Commands for Debugging
 ```bash
@@ -180,3 +338,38 @@ tail -f ~/.streamlit/logs/streamlit.log
 **Base URL**: `https://openrouter.ai/api/v1`
 
 This setup provides access to DeepSeek's chat model through OpenRouter's API with the free tier.
+
+## Environment Export
+
+The repository includes an `environment.yml` file that captures the exact package versions of a working Open Notebook installation:
+
+### Key Environment Details
+- **Python Version**: 3.11.13
+- **Core Package**: open-notebook==0.3.2
+- **Total Dependencies**: 200+ packages including:
+  - FastAPI (0.116.1) + Uvicorn (0.35.0) for API backend
+  - Streamlit (1.49.1) for web UI
+  - SurrealDB (1.0.6) + surreal-commands (1.1.1) for database
+  - LangChain ecosystem (0.3.x) for AI integrations
+  - Multiple AI provider libraries (OpenAI, Anthropic, Google, etc.)
+
+### Regenerating Environment Export
+If you make changes to the environment and want to create a new export:
+```bash
+# Activate the environment
+conda activate open-notebook
+
+# Export to environment.yml
+conda env export -n open-notebook > environment.yml
+```
+
+### Using the Environment File
+```bash
+# Create identical environment on another machine
+conda env create -f environment.yml
+
+# Update existing environment
+conda env update -f environment.yml
+```
+
+This ensures consistent installations across different development environments and makes it easy to reproduce the exact working setup.
