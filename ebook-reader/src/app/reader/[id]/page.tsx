@@ -9,6 +9,7 @@ import {
   BookOpen, 
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Send,
   X,
   History,
@@ -61,10 +62,10 @@ const ChatMessageComponent = memo(({
 }: {
   message: ChatMessage;
   showReferences: string | null;
-  references: Record<string, Reference[]>;
+  references: Record<string, Reference>;
   onToggleReferences: (messageId: string) => void;
   isFullscreen: boolean;
-  onNavigateToReference: (offset: number) => void;
+  onNavigateToReference: (pageNumber: number) => void;
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
@@ -72,7 +73,7 @@ const ChatMessageComponent = memo(({
     className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
   >
     <div className={`px-4 py-2 rounded-lg ${
-      isFullscreen ? 'max-w-4xl' : 'max-w-xs'
+      isFullscreen ? 'w-full' : 'max-w-xs'
     } ${
       message.type === 'user' 
         ? 'bg-amber-600 text-white' 
@@ -91,13 +92,21 @@ const ChatMessageComponent = memo(({
             <div className="mt-2 flex items-center space-x-2 flex-wrap">
               <button
                 onClick={() => {
-                  console.log('Reference button clicked for message:', message.id);
-                  console.log('Message references:', message.references);
                   onToggleReferences(message.id);
                 }}
-                className="text-xs underline hover:no-underline"
+                className="text-xs inline-flex items-center space-x-2"
+                title="Toggle references"
               >
-                {showReferences === message.id ? 'Hide' : 'Show'} References ({message.references.length})
+                <span className="w-5 h-5 rounded-full border border-current flex items-center justify-center">
+                  {showReferences === message.id ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </span>
+                <span>
+                  References ({message.references.length})
+                </span>
               </button>
             </div>
           )}
@@ -121,7 +130,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [isThinking, setIsThinking] = useState(false);
   const [showThinkingIndicator, setShowThinkingIndicator] = useState(false);
   const [showReferences, setShowReferences] = useState<string | null>(null);
-  const [references, setReferences] = useState<Record<string, Reference[]>>({});
+  const [references, setReferences] = useState<Record<string, Reference>>({});
   const [bookContent, setBookContent] = useState<string>('');
   const [contentChunks, setContentChunks] = useState<ContentChunk[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
@@ -136,6 +145,47 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const contentContainerRef = useRef<HTMLDivElement>(null);
+
+  // Cache for referenced books' content and chunks (when refs point to other books)
+  const [referencedBooks, setReferencedBooks] = useState<Record<string, { content: string; chunks: ContentChunk[]; chunkStarts: number[]; title?: string }>>({});
+  const [loadingBookIds, setLoadingBookIds] = useState<Record<string, boolean>>({});
+
+  // Precompute start offsets for each chunk within the full book content
+  const chunkStartOffsets = useMemo(() => {
+    const starts: number[] = [];
+    let acc = 0;
+    for (const chunk of contentChunks) {
+      starts.push(acc);
+      acc += chunk.content.length;
+    }
+    return starts;
+  }, [contentChunks]);
+
+  const escapeHtml = useCallback((text: string): string => {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }, []);
+
+  const highlightRangeInChunk = useCallback((chunkText: string, chunkStart: number, refStart: number, refEnd: number): string => {
+    const chunkEnd = chunkStart + chunkText.length;
+    const effectiveStart = Math.max(refStart, chunkStart);
+    const effectiveEnd = Math.min(refEnd, chunkEnd);
+    if (isNaN(refStart) || isNaN(refEnd) || effectiveStart >= effectiveEnd) {
+      return escapeHtml(chunkText);
+    }
+    const localStart = effectiveStart - chunkStart;
+    const localEnd = effectiveEnd - chunkStart;
+    const beforeRef = chunkText.substring(0, localStart);
+    const refText = chunkText.substring(localStart, localEnd);
+    const afterRef = chunkText.substring(localEnd);
+    return (
+      escapeHtml(beforeRef) +
+      '<mark class="bg-yellow-200 px-1 rounded">' + escapeHtml(refText) + '</mark>' +
+      escapeHtml(afterRef)
+    );
+  }, [escapeHtml]);
 
   // Save current page when component unmounts or page unloads
   useEffect(() => {
@@ -388,7 +438,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         };
         
         console.log('Setting up test data...');
-        setReferences({ 'test-message': [testRef] });
+        setReferences({ [testRef.id]: testRef });
         setChatMessages([testMessage]);
         
         console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
@@ -570,14 +620,17 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
         };
 
         // Store references
-        const refsMap: Record<string, Reference[]> = {};
+        const refsMap: Record<string, Reference> = {};
         data.data.references.forEach((ref: any) => {
-          refsMap[ref.id] = [{
+          refsMap[ref.id] = {
             id: ref.id,
             content: ref.content,
             page: ref.page,
-            chapter: ref.chapter
-          }];
+            chapter: ref.chapter,
+            startOffset: ref.startOffset,
+            endOffset: ref.endOffset,
+            bookId: ref.bookId
+          };
         });
         setReferences(prev => ({ ...prev, ...refsMap }));
 
@@ -637,10 +690,8 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
   };
 
   const toggleReferences = (messageId: string) => {
-    console.log('Toggling references for message:', messageId, 'Current showReferences:', showReferences);
-    console.log('Available references:', references);
-    console.log('References for this message:', references[messageId]);
-    setShowReferences(showReferences === messageId ? null : messageId);
+    const willOpen = showReferences !== messageId;
+    setShowReferences(willOpen ? messageId : null);
   };
 
   const navigateToReference = (pageNumber: number) => {
@@ -786,6 +837,47 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
   });
 
   MemoizedMarkdown.displayName = 'MemoizedMarkdown';
+
+  // When expanding references for a message, prefetch any referenced book contents not yet loaded
+  useEffect(() => {
+    const prefetchReferencedBooks = async () => {
+      if (!showReferences) return;
+      const msg = chatMessages.find(m => m.id === showReferences);
+      if (!msg || !msg.references) return;
+      const bookIds = new Set<string>();
+      for (const refId of msg.references) {
+        const ref = references[refId];
+        if (ref && ref.bookId && ref.bookId !== id) {
+          bookIds.add(ref.bookId);
+        }
+      }
+      for (const bookId of bookIds) {
+        if (referencedBooks[bookId] || loadingBookIds[bookId]) continue;
+        setLoadingBookIds(prev => ({ ...prev, [bookId]: true }));
+        try {
+          const resp = await fetch(`/api/books/${bookId}`);
+          if (!resp.ok) throw new Error('Failed to fetch referenced book');
+          const data = await resp.json();
+          if (!data.success || !data.data?.content) throw new Error('Invalid referenced book data');
+          const book = data.data;
+          const chunks = chunkContent(book.content || '');
+          // compute chunk starts
+          const starts: number[] = [];
+          let acc = 0;
+          for (const ch of chunks) {
+            starts.push(acc);
+            acc += ch.content.length;
+          }
+          setReferencedBooks(prev => ({ ...prev, [bookId]: { content: book.content || '', chunks, chunkStarts: starts, title: book.title } }));
+        } catch (e) {
+          console.error('Error prefetching referenced book', bookId, e);
+        } finally {
+          setLoadingBookIds(prev => ({ ...prev, [bookId]: false }));
+        }
+      }
+    };
+    prefetchReferencedBooks();
+  }, [showReferences, chatMessages, references, id, referencedBooks, loadingBookIds, chunkContent]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1126,79 +1218,104 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   </div>
                 ) : (
                   chatMessages.map((message) => (
-                    <ChatMessageComponent
-                      key={message.id}
-                      message={message}
-                      showReferences={showReferences}
-                      references={references}
-                      onToggleReferences={toggleReferences}
-                      isFullscreen={isFullscreen}
-                      onNavigateToReference={navigateToReference}
-                    />
-                  ))
-                )}
+                    <div key={message.id} className="space-y-2">
+                      <ChatMessageComponent
+                        message={message}
+                        showReferences={showReferences}
+                        references={references}
+                        onToggleReferences={toggleReferences}
+                        isFullscreen={isFullscreen}
+                        onNavigateToReference={navigateToReference}
+                      />
 
-                {/* References */}
-                <AnimatePresence>
-                  {showReferences && references[showReferences] && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="bg-amber-50 border border-amber-200 rounded-lg p-4"
-                    >
-                      <h4 className="font-semibold text-amber-900 mb-2">References</h4>
-                      {references[showReferences]?.map((ref: Reference) => (
-                        <div key={ref.id} className="mb-4 last:mb-0">
-                          <div className="text-sm text-amber-800">
-                            <strong>{ref.chapter}</strong>
-                            {ref.page && <span className="ml-2 text-amber-600">(Page {ref.page})</span>}
-                            {ref.startOffset && ref.endOffset && (
-                              <span className="ml-2 text-blue-600">(Chars {ref.startOffset}:{ref.endOffset})</span>
-                            )}
-                            {ref.bookId && (
-                              <span className="ml-2 text-gray-600">(Book: {ref.bookId})</span>
-                            )}
-                          </div>
-                          <div className="text-xs text-amber-700 mt-1 italic">
-                            "{ref.content}"
-                          </div>
-                          <div className="mt-2 flex space-x-2">
-                            <button
-                              onClick={() => navigateToReference(ref.page || 1)}
-                              className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-1 rounded transition-colors flex items-center space-x-1"
-                            >
-                              <ExternalLink className="h-3 w-3" />
-                              <span>Go to section</span>
-                            </button>
-                          </div>
-                          
-                          {/* Inline reference content - always shown when references are expanded */}
+                      {/* Inline scrollable pages with highlighted ranges */}
+                      <AnimatePresence>
+                        {showReferences === message.id && message.references && message.references.length > 0 && (
                           <motion.div
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="mt-4 bg-white border-2 border-blue-200 rounded-lg p-4 shadow-sm"
+                            className="bg-amber-50 border border-amber-200 rounded-lg p-3"
                           >
-                            <div className="text-sm text-blue-700 mb-3 font-semibold border-b border-blue-100 pb-2">
-                              📖 Book Content Context {ref.startOffset && ref.endOffset && `(Chars ${ref.startOffset}:${ref.endOffset})`}
-                              {ref.bookId && ` - ${ref.bookId}`}
+                            <h4 className="font-semibold text-amber-900 mb-2 text-sm">References</h4>
+                            <div className="space-y-4">
+                              {message.references.map((refId) => {
+                                const ref = references[refId];
+                                if (!ref) return null;
+
+                                // Determine offsets to highlight
+                                let refStart = typeof ref.startOffset === 'number' ? ref.startOffset : -1;
+                                let refEnd = typeof ref.endOffset === 'number' ? ref.endOffset : -1;
+                                // Select the correct book content/chunks depending on ref.bookId
+                                const useCurrentBook = !ref.bookId || ref.bookId === id;
+                                const sourceContent = useCurrentBook ? bookContent : referencedBooks[ref.bookId!]?.content;
+                                const sourceChunks = useCurrentBook ? contentChunks : referencedBooks[ref.bookId!]?.chunks || [];
+                                const sourceStarts = useCurrentBook ? chunkStartOffsets : referencedBooks[ref.bookId!]?.chunkStarts || [];
+
+                                if (refStart < 0 && ref.content && sourceContent) {
+                                  const idx = sourceContent.indexOf(ref.content);
+                                  if (idx >= 0) {
+                                    refStart = idx;
+                                    refEnd = idx + ref.content.length;
+                                  }
+                                }
+
+                                if (refStart < 0 || refEnd <= refStart) {
+                                  return (
+                                    <div key={refId} className="text-xs text-amber-800">
+                                      Unable to locate reference range in the book content.
+                                    </div>
+                                  );
+                                }
+
+                                // Find which chunks (pages) intersect the reference range
+                                const pagesToRender: number[] = [];
+                                for (let i = 0; i < sourceChunks.length; i++) {
+                                  const cStart = sourceStarts[i] ?? 0;
+                                  const cEnd = cStart + sourceChunks[i].content.length;
+                                  if (refStart < cEnd && refEnd > cStart) {
+                                    pagesToRender.push(i);
+                                  }
+                                  if (cStart > refEnd) break;
+                                }
+
+                                return (
+                                  <div key={refId} className="border border-amber-200 rounded-md bg-white">
+                                    <div className="px-3 py-2 border-b border-amber-200 text-sm text-amber-900 flex items-center justify-between">
+                                      <div>
+                                        {ref.chapter && <strong>{ref.chapter}</strong>}
+                                        {ref.page && <span className="ml-2 text-amber-700">(Page {ref.page})</span>}
+                                        {!useCurrentBook && ref.bookId && <span className="ml-2 text-gray-600">[{referencedBooks[ref.bookId]?.title || ref.bookId}]</span>}
+                                      </div>
+                                    </div>
+                                    <div className="max-h-80 overflow-y-auto">
+                                      {pagesToRender.map((pi) => {
+                                        const chunk = sourceChunks[pi];
+                                        const cStart = sourceStarts[pi] ?? 0;
+                                        const html = highlightRangeInChunk(chunk.content, cStart, refStart, refEnd);
+                                        return (
+                                          <div key={chunk.id} className="p-3 border-b last:border-b-0 border-gray-100">
+                                            <div className="text-xs text-gray-500 mb-2">Page {chunk.page}{chunk.chapter ? ` • ${chunk.chapter}` : ''}</div>
+                                            <div
+                                              className="text-sm leading-relaxed whitespace-pre-wrap"
+                                              dangerouslySetInnerHTML={{ __html: html }}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
-                            <div 
-                              className="text-base text-gray-800 leading-relaxed max-h-80 overflow-y-auto bg-gray-50 p-3 rounded border"
-                              dangerouslySetInnerHTML={{ 
-                                __html: loadInlineReferenceContent(
-                                  ref.startOffset || 0, 
-                                  ref.endOffset
-                                ) 
-                              }}
-                            />
                           </motion.div>
-                        </div>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))
+                )}
+
+                {/* Removed global references section; references now render inline per message */}
 
                 {/* Loading Indicator */}
                 {isLoading && (
