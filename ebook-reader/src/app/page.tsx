@@ -128,8 +128,12 @@ export default function Home() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-3">
-              <BookOpen className="h-8 w-8 text-amber-600" />
-              <h1 className="text-2xl font-bold text-gray-900">E-Book Reader</h1>
+              <img 
+                src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
+                alt="AtlasMind Logo" 
+                className="h-16 w-16 object-contain"
+              />
+              <h1 className="text-2xl font-bold text-gray-900">AtlasMind</h1>
             </div>
             <div className="flex items-center space-x-4">
               <Settings className="h-6 w-6 text-gray-600 hover:text-gray-900 cursor-pointer" />
@@ -253,7 +257,11 @@ export default function Home() {
             animate={{ opacity: 1 }}
             className="text-center py-16"
           >
-            <BookOpen className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <img 
+              src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
+              alt="AtlasMind Logo" 
+              className="h-24 w-24 object-contain opacity-60 mx-auto mb-4"
+            />
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No books yet</h3>
             <p className="text-gray-600">Upload your first e-book to get started</p>
           </motion.div>
