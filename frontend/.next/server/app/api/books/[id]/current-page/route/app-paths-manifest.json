@@ -1,3 +1,0 @@
-{
-  "/api/books/[id]/current-page/route": "app/api/books/[id]/current-page/route.js"
-}

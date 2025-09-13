@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { openNotebookClient, ensureModelsConfigured } from '@/lib/openNotebook';
+import { getBookById } from '@/lib/database';
 
 interface QARequest {
   question: string;
@@ -29,37 +31,71 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Forward the request to the backend API
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:5055';
-    
-    const response = await fetch(`${backendUrl}/api/search/ask/simple`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        question,
-        bookId,
-        context: context || ''
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Backend API error: ${response.status}`);
+    // Get book information from local database
+    const book = getBookById(bookId);
+    if (!book) {
+      return NextResponse.json(
+        { success: false, error: 'Book not found' },
+        { status: 404 }
+      );
     }
 
-    const backendData = await response.json();
-    
-    // Transform backend response to match frontend expectations
-    const transformedResponse: QAResponse = {
-      answer: backendData.answer,
-      references: backendData.references || []
-    };
+    // Check if book has been processed by Open Notebook
+    if (!book.notebookId || !book.sourceId) {
+      return NextResponse.json(
+        { success: false, error: 'Book not yet processed by AI backend. Please wait for processing to complete.' },
+        { status:400 }
+      );
+    }
 
-    return NextResponse.json({
-      success: true,
-      data: transformedResponse
-    });
+    // Ensure models are configured
+    const modelsStatus = await ensureModelsConfigured();
+    if (!modelsStatus.ready) {
+      return NextResponse.json(
+        { success: false, error: 'Open Notebook models not configured properly. Please check the AI backend configuration.' },
+        { status: 503 }
+      );
+    }
+
+    // Use the default chat model for answering questions
+    const chatModel = modelsStatus.chatModel!;
+
+    // Make request to Open Notebook's chunk-based Q&A endpoint
+    try {
+      const askResponse = await openNotebookClient.askQuestion({
+        question,
+        model_id: chatModel.id,
+        limit: 10, // Get up to 10 relevant chunks
+        search_sources: true,
+        search_notes: false,
+        minimum_score: 0.3
+      });
+
+      // Transform Open Notebook response to match frontend expectations
+      const references = askResponse.chunks_used.map((chunk, index) => ({
+        id: chunk.id,
+        content: chunk.text,
+        relevanceScore: askResponse.vector_search_results[index]?.score || 0.8
+      }));
+
+      const transformedResponse: QAResponse = {
+        answer: askResponse.answer,
+        references
+      };
+
+      return NextResponse.json({
+        success: true,
+        data: transformedResponse
+      });
+
+    } catch (openNotebookError) {
+      console.error('Open Notebook API error:', openNotebookError);
+      return NextResponse.json(
+        { success: false, error: 'AI backend is not available. Please ensure Open Notebook is running.' },
+        { status: 503 }
+      );
+    }
+
   } catch (error) {
     console.error('QA API Error:', error);
     return NextResponse.json(

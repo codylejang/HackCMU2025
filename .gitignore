@@ -146,3 +146,8 @@ next-env.d.ts
 
 # Claude logs
 .claude/logs
+assets
+logs
+
+*.next
+package-lock.json

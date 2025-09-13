@@ -12,6 +12,8 @@ export interface Book {
   fileSize: number;
   content?: string;
   currentPage?: number;
+  notebookId?: string;
+  sourceId?: string;
 }
 
 const DATABASE_PATH = path.join(process.cwd(), 'data', 'database', 'books.json');

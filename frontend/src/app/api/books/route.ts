@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllBooks, addBook, deleteBook } from '@/lib/database';
 import { saveUploadedFile, generateBookCover, extractTextContent } from '@/lib/fileUpload';
+import { openNotebookClient, checkOpenNotebookConnection, ensureModelsConfigured } from '@/lib/openNotebook';
 import path from 'path';
 
 export async function GET() {
@@ -142,9 +143,75 @@ export async function POST(request: NextRequest) {
     // Save to database
     const savedBook = addBook(newBook);
 
+    // Create notebook and source in Open Notebook backend
+    let notebookId: string | null = null;
+    let sourceId: string | null = null;
+
+    try {
+      // Check if Open Notebook is available
+      const isConnected = await checkOpenNotebookConnection();
+      if (isConnected) {
+        // Check if models are configured
+        const modelsStatus = await ensureModelsConfigured();
+        if (!modelsStatus.ready) {
+          console.warn('Open Notebook models not configured properly. Book uploaded but AI features may not work.');
+        }
+
+        // Create a notebook for this book
+        const notebook = await openNotebookClient.createNotebook({
+          name: title,
+          description: `E-book: ${title}${bookAuthor !== 'Unknown' ? ` by ${bookAuthor}` : ''}`
+        });
+
+        notebookId = notebook.id;
+        console.log(`Created notebook ${notebookId} for book: ${title}`);
+
+        // Create a source with the book content
+        const source = await openNotebookClient.createSource({
+          notebook_id: notebookId,
+          title: title,
+          content: content,
+          type: 'text',
+          metadata: {
+            bookId: savedBook.id,
+            fileName: file.name,
+            fileType: fileType,
+            author: bookAuthor,
+            uploadDate: savedBook.uploadDate,
+            fileSize: file.size
+          }
+        });
+
+        sourceId = source.id;
+        console.log(`Created source ${sourceId} for book: ${title}`);
+
+        // Update the book record with notebook information
+        savedBook.notebookId = notebookId;
+        savedBook.sourceId = sourceId;
+
+        // Re-save with updated information
+        const updatedBooks = getAllBooks().map(book =>
+          book.id === savedBook.id ? { ...book, notebookId, sourceId } : book
+        );
+
+        // Update the database file
+        const fs = require('fs');
+        const dbPath = path.join(process.cwd(), 'data', 'database', 'books.json');
+        fs.writeFileSync(dbPath, JSON.stringify(updatedBooks, null, 2));
+      }
+    } catch (error) {
+      console.error('Failed to create notebook/source in Open Notebook:', error);
+      // Continue anyway - the book is still saved locally
+    }
+
     return NextResponse.json({
       success: true,
-      data: savedBook
+      data: savedBook,
+      openNotebook: {
+        connected: notebookId !== null,
+        notebookId,
+        sourceId
+      }
     });
   } catch (error) {
     console.error('Error uploading book:', error);
