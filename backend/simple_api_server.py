@@ -150,7 +150,7 @@ Remember: Always include reference markers [REF:start:end] in your response when
             # Clean the answer by removing reference markers and replacing with numbered references
             clean_answer = answer
             for i, (start, end) in enumerate(matches):
-                clean_answer = clean_answer.replace(f'[REF:{start}:{end}]', f'[Reference {i+1}]')
+                clean_answer = clean_answer.replace(f'[REF:{start}:{end}]', f'[{i+1}]')
             
             return {
                 "answer": clean_answer,

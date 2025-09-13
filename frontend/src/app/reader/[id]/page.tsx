@@ -59,6 +59,7 @@ const ChatMessageComponent = memo(({
   message,
   isFullscreen,
   refGroups,
+  refNumberMap,
   openRefMessageId,
   openRefId,
   onToggleRef,
@@ -67,6 +68,7 @@ const ChatMessageComponent = memo(({
   message: ChatMessage;
   isFullscreen: boolean;
   refGroups: Record<number, string[]>;
+  refNumberMap: Record<string, number>;
   openRefMessageId: string | null;
   openRefId: string | null;
   onToggleRef: (messageId: string, refId: string) => void;
@@ -115,7 +117,7 @@ const ChatMessageComponent = memo(({
                                 <ChevronRight className="h-3 w-3" />
                               )}
                             </span>
-                            <span>Reference ({refGroups[idx].length})</span>
+                            <span>Reference ({refNumberMap[refId] || 1})</span>
                           </button>
                         ))}
                       </div>
@@ -1489,39 +1491,51 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   </div>
                 ) : (
                   chatMessages.map((message) => {
-                    // Group references by paragraph index: manual assignment for testing
+                    // Group references by paragraph index
                     const refGroups: Record<number, string[]> = {};
+                    const refNumberMap: Record<string, number> = {};
+                    
                     if (message.references && message.references.length) {
                       const paragraphs = message.content.split(/\n{2,}/);
                       
-                      // For test message, manually assign references to paragraphs
-                      if (message.id === 'test-message') {
-                        // First paragraph: ref-para-1a, ref-para-1b
-                        refGroups[0] = ['ref-para-1a', 'ref-para-1b'];
-                        // Second paragraph: ref-para-2a, ref-para-2b  
-                        refGroups[1] = ['ref-para-2a', 'ref-para-2b'];
-                        // Third paragraph: ref-para-3a, ref-para-3b, ref-para-3c
-                        refGroups[2] = ['ref-para-3a', 'ref-para-3b', 'ref-para-3c'];
-                      } else {
-                        // For other messages, use the original distribution logic
-                        message.references.forEach((refId) => {
-                          const ref = references[refId];
-                          let targetIdx = paragraphs.length - 1;
-                          if (ref && typeof ref.startOffset === 'number' && typeof ref.endOffset === 'number') {
-                            // Distribute by position in full content if available (fallback to last paragraph)
-                            const len = message.content.length;
-                            const pos = Math.min(Math.max(ref.startOffset, 0), len);
-                            let acc = 0;
-                            for (let i = 0; i < paragraphs.length; i++) {
-                              const next = acc + paragraphs[i].length + (i < paragraphs.length - 1 ? 2 : 0);
-                              if (pos <= next) { targetIdx = i; break; }
-                              acc = next;
+                      // Create a mapping of reference IDs to sequential numbers
+                      message.references.forEach((refId, index) => {
+                        refNumberMap[refId] = index + 1;
+                      });
+                      
+                      // Distribute references across paragraphs
+                      // Try to match references to paragraphs based on content similarity
+                      message.references.forEach((refId, index) => {
+                        const ref = references[refId];
+                        let targetIdx = Math.min(index, paragraphs.length - 1);
+                        
+                        // If we have reference content, try to find the best matching paragraph
+                        if (ref && ref.content) {
+                          let bestMatch = -1;
+                          let bestScore = 0;
+                          
+                          paragraphs.forEach((para, paraIdx) => {
+                            // Simple similarity check - count common words
+                            const refWords = ref.content.toLowerCase().split(/\s+/);
+                            const paraWords = para.toLowerCase().split(/\s+/);
+                            const commonWords = refWords.filter(word => paraWords.includes(word));
+                            const score = commonWords.length / Math.max(refWords.length, paraWords.length);
+                            
+                            if (score > bestScore) {
+                              bestScore = score;
+                              bestMatch = paraIdx;
                             }
+                          });
+                          
+                          // Use the best match if it has a reasonable score, otherwise fall back to distribution
+                          if (bestMatch >= 0 && bestScore > 0.1) {
+                            targetIdx = bestMatch;
                           }
-                          if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
-                          refGroups[targetIdx].push(refId);
-                        });
-                      }
+                        }
+                        
+                        if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
+                        refGroups[targetIdx].push(refId);
+                      });
                     }
 
                     const renderRefBlock = (refId: string) => {
@@ -1593,6 +1607,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                         message={message}
                         isFullscreen={isFullscreen}
                         refGroups={refGroups}
+                        refNumberMap={refNumberMap}
                         openRefMessageId={openRefMessageId}
                         openRefId={openRefId}
                         onToggleRef={toggleRef}
