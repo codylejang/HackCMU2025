@@ -22,6 +22,7 @@ import {
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import Image from 'next/image';
 
 interface ChatMessage {
   id: string;
@@ -1308,7 +1309,13 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                 </motion.button>
               </Link>
               <div className="flex items-center space-x-3">
-                <BookOpen className="h-6 w-6 text-amber-600" />
+                <Image 
+                  src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
+                  alt="AtlasMind Logo" 
+                  width={80} 
+                  height={80} 
+                  className="rounded"
+                />
                 <h1 className="text-lg font-semibold text-gray-900">{bookMetadata?.title || 'Loading...'}</h1>
               </div>
             </div>
@@ -1406,7 +1413,13 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   {allChunks.length === 0 && (
                     <div className="text-center text-gray-500 flex items-center justify-center h-full">
                       <div>
-                        <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                        <Image 
+                          src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
+                          alt="AtlasMind Logo" 
+                          width={128} 
+                          height={128} 
+                          className="mx-auto mb-4 rounded opacity-50"
+                        />
                         <p>No content available for this section.</p>
                       </div>
                     </div>

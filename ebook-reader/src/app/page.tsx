@@ -131,7 +131,7 @@ export default function Home() {
               <img 
                 src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
                 alt="AtlasMind Logo" 
-                className="h-16 w-16 object-contain"
+                className="h-20 w-20 object-contain"
               />
               <h1 className="text-2xl font-bold text-gray-900">AtlasMind</h1>
             </div>
@@ -257,11 +257,7 @@ export default function Home() {
             animate={{ opacity: 1 }}
             className="text-center py-16"
           >
-            <img 
-              src="/Gemini_Generated_Image_3aa3y43aa3y43aa3(2).png" 
-              alt="AtlasMind Logo" 
-              className="h-24 w-24 object-contain opacity-60 mx-auto mb-4"
-            />
+            <BookOpen className="h-32 w-32 text-amber-400 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-gray-900 mb-2">No books yet</h3>
             <p className="text-gray-600">Upload your first e-book to get started</p>
           </motion.div>
