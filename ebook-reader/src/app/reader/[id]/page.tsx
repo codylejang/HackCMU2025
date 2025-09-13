@@ -52,6 +52,7 @@ const CHUNK_SIZE = 10000; // Characters per chunk (~10k words per page)
 const CHUNKS_PER_PAGE = 1; // One chunk per section for single screen fit
 const CHUNKS_TO_LOAD = 5; // Number of chunks to load ahead/behind current position
 const CHUNK_LOAD_THRESHOLD = 0.8; // Load more chunks when 80% through current set
+const MAX_LOADED_CHUNKS = 50; // Maximum number of chunks to keep in memory
 
 // Memoized chat message component
 const ChatMessageComponent = memo(({ 
@@ -147,6 +148,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [isLoadingChunks, setIsLoadingChunks] = useState(false);
   const [scrollPosition, setScrollPosition] = useState(0);
+  const [lastLoadTime, setLastLoadTime] = useState(0);
   
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -493,24 +495,105 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     return allChunks.slice(startIndex, endIndex + 1);
   }, []);
 
-  const updateLoadedChunks = useCallback((newChunkIndex: number) => {
+  const expandChunksUp = useCallback(() => {
     if (contentChunks.length === 0) return;
     
     setIsLoadingChunks(true);
     
-    // Calculate which chunks to load around the current position
-    const newLoadedChunks = loadChunksAroundIndex(newChunkIndex, contentChunks);
+    // Get the current first loaded chunk index
+    const currentFirstChunk = loadedChunks[0];
+    if (!currentFirstChunk) return;
     
-    setLoadedChunks(newLoadedChunks);
-    setCurrentChunkIndex(newChunkIndex);
-    
-    // Small delay to show loading state
-    setTimeout(() => {
+    const currentFirstIndex = contentChunks.findIndex(chunk => chunk.id === currentFirstChunk.id);
+    if (currentFirstIndex <= 0) {
       setIsLoadingChunks(false);
-    }, 100);
-  }, [contentChunks, loadChunksAroundIndex]);
+      return; // Already at the beginning
+    }
+    
+    // Load more chunks before the current first chunk
+    const newStartIndex = Math.max(0, currentFirstIndex - CHUNKS_TO_LOAD);
+    const newChunks = contentChunks.slice(newStartIndex, currentFirstIndex);
+    
+    // Prepend new chunks to the beginning, avoiding duplicates
+    setLoadedChunks(prev => {
+      // Filter out chunks that are already loaded
+      const existingIds = new Set(prev.map(chunk => chunk.id));
+      const uniqueNewChunks = newChunks.filter(chunk => !existingIds.has(chunk.id));
+      
+      // If no new unique chunks, don't update
+      if (uniqueNewChunks.length === 0) {
+        setIsLoadingChunks(false);
+        return prev;
+      }
+      
+      const updated = [...uniqueNewChunks, ...prev];
+      // Trim from the end if we exceed max chunks
+      if (updated.length > MAX_LOADED_CHUNKS) {
+        return updated.slice(0, MAX_LOADED_CHUNKS);
+      }
+      return updated;
+    });
+    
+    console.log('Expanded chunks up:', { 
+      requestedChunks: newChunks.length,
+      uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+      newStartIndex, 
+      currentFirstIndex 
+    });
+    
+    setTimeout(() => setIsLoadingChunks(false), 100);
+  }, [contentChunks, loadedChunks]);
 
-  // Scroll detection for dynamic loading
+  const expandChunksDown = useCallback(() => {
+    if (contentChunks.length === 0) return;
+    
+    setIsLoadingChunks(true);
+    
+    // Get the current last loaded chunk index
+    const currentLastChunk = loadedChunks[loadedChunks.length - 1];
+    if (!currentLastChunk) return;
+    
+    const currentLastIndex = contentChunks.findIndex(chunk => chunk.id === currentLastChunk.id);
+    if (currentLastIndex >= contentChunks.length - 1) {
+      setIsLoadingChunks(false);
+      return; // Already at the end
+    }
+    
+    // Load more chunks after the current last chunk
+    const newEndIndex = Math.min(contentChunks.length, currentLastIndex + 1 + CHUNKS_TO_LOAD);
+    const newChunks = contentChunks.slice(currentLastIndex + 1, newEndIndex);
+    
+    // Append new chunks to the end, avoiding duplicates
+    setLoadedChunks(prev => {
+      // Filter out chunks that are already loaded
+      const existingIds = new Set(prev.map(chunk => chunk.id));
+      const uniqueNewChunks = newChunks.filter(chunk => !existingIds.has(chunk.id));
+      
+      // If no new unique chunks, don't update
+      if (uniqueNewChunks.length === 0) {
+        setIsLoadingChunks(false);
+        return prev;
+      }
+      
+      const updated = [...prev, ...uniqueNewChunks];
+      // Trim from the beginning if we exceed max chunks
+      if (updated.length > MAX_LOADED_CHUNKS) {
+        return updated.slice(-MAX_LOADED_CHUNKS);
+      }
+      return updated;
+    });
+    
+    console.log('Expanded chunks down:', { 
+      requestedChunks: newChunks.length,
+      uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+      currentLastIndex, 
+      newEndIndex 
+    });
+    
+    setTimeout(() => setIsLoadingChunks(false), 100);
+  }, [contentChunks, loadedChunks]);
+
+  // Scroll detection for dynamic expansion
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const container = e.currentTarget;
     const scrollTop = container.scrollTop;
@@ -522,21 +605,30 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     // Handle edge cases where scrollHeight equals clientHeight
     if (scrollHeight <= clientHeight) return;
     
-    // Calculate which chunk is currently in view
+    // Calculate scroll position as percentage
     const scrollPercentage = scrollTop / (scrollHeight - clientHeight);
-    const estimatedChunkIndex = Math.floor(scrollPercentage * (contentChunks.length - 1));
     
-    // Check if we need to load more chunks
-    const currentLoadedStart = Math.max(0, currentChunkIndex - CHUNKS_TO_LOAD);
-    const currentLoadedEnd = Math.min(contentChunks.length - 1, currentChunkIndex + CHUNKS_TO_LOAD);
+    // Define expansion thresholds
+    const expandUpThreshold = 0.1; // Expand up when in top 10%
+    const expandDownThreshold = 0.9; // Expand down when in bottom 10%
     
-    // If user is approaching the end of loaded chunks, load more
-    if (estimatedChunkIndex > currentLoadedEnd * CHUNK_LOAD_THRESHOLD) {
-      updateLoadedChunks(estimatedChunkIndex);
-    } else if (estimatedChunkIndex < currentLoadedStart * (1 + (1 - CHUNK_LOAD_THRESHOLD))) {
-      updateLoadedChunks(estimatedChunkIndex);
+    const now = Date.now();
+    const timeSinceLastLoad = now - lastLoadTime;
+    const minLoadInterval = 500; // Minimum 500ms between loads (faster for better UX)
+    
+    // Check if we should expand up (user scrolled near the top)
+    if (scrollPercentage < expandUpThreshold && timeSinceLastLoad > minLoadInterval) {
+      console.log('Expanding chunks up - user near top:', { scrollPercentage });
+      setLastLoadTime(now);
+      expandChunksUp();
     }
-  }, [contentChunks.length, currentChunkIndex, updateLoadedChunks]);
+    // Check if we should expand down (user scrolled near the bottom)
+    else if (scrollPercentage > expandDownThreshold && timeSinceLastLoad > minLoadInterval) {
+      console.log('Expanding chunks down - user near bottom:', { scrollPercentage });
+      setLastLoadTime(now);
+      expandChunksDown();
+    }
+  }, [expandChunksUp, expandChunksDown, lastLoadTime]);
 
   // Load book content from API
   useEffect(() => {
@@ -1213,8 +1305,11 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   className="text-gray-800 leading-relaxed flex-1 overflow-y-auto"
                   onScroll={handleScroll}
                 >
-                  {allChunks.map((chunk, index) => (
-                    <div key={chunk.id} className="mb-12">
+                  {allChunks.map((chunk, index) => {
+                    // Create a unique key that includes the chunk's position in the loaded array
+                    const uniqueKey = `${chunk.id}-loaded-${index}`;
+                    return (
+                    <div key={uniqueKey} className="mb-12">
                       {chunk.chapter && index === 0 && chunk.chapter.length > 10 && (
                         <div className="mb-8 p-6 bg-amber-50 border-l-4 border-amber-300 rounded-r-lg">
                           <h2 className="text-2xl font-semibold text-amber-800">{chunk.chapter}</h2>
@@ -1224,7 +1319,8 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                         <MemoizedMarkdown content={chunk.content} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   
                   {allChunks.length === 0 && (
                     <div className="text-center text-gray-500 flex items-center justify-center h-full">
@@ -1237,9 +1333,11 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   
                   {/* Loading indicator for progressive loading */}
                   {isLoadingChunks && (
-                    <div className="flex justify-center items-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
-                      <span className="ml-3 text-gray-600">Loading more content...</span>
+                    <div className="fixed top-4 right-4 bg-amber-100 border border-amber-300 rounded-lg px-4 py-2 shadow-lg z-50">
+                      <div className="flex items-center space-x-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600"></div>
+                        <span className="text-sm text-amber-800">Expanding content...</span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1249,7 +1347,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
             {/* Reading Progress Indicator */}
             <div className="flex justify-center items-center mt-8">
               <div className="text-sm text-gray-500">
-                Progressive loading - {loadedChunks.length} of {contentChunks.length} chunks loaded
+                Dynamic loading - {loadedChunks.length} chunks loaded (max {MAX_LOADED_CHUNKS})
               </div>
             </div>
           </div>
