@@ -1,0 +1,9 @@
+{
+  "/api/books/[id]/current-page/route": "app/api/books/[id]/current-page/route.js",
+  "/api/books/[id]/route": "app/api/books/[id]/route.js",
+  "/api/books/route": "app/api/books/route.js",
+  "/api/covers/[filename]/route": "app/api/covers/[filename]/route.js",
+  "/favicon.ico/route": "app/favicon.ico/route.js",
+  "/page": "app/page.js",
+  "/reader/[id]/page": "app/reader/[id]/page.js"
+}
