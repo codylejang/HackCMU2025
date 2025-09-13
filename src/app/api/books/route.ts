@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllBooks, addBook, deleteBook } from '@/lib/database';
 import { saveUploadedFile, generateBookCover, extractTextContent } from '@/lib/fileUpload';
+import { openNotebookClient } from '@/lib/openNotebook';
 import path from 'path';
 
 export async function GET() {
@@ -102,16 +103,64 @@ export async function POST(request: NextRequest) {
       coverPath: finalCoverPath || '', // Use the final cover path
       fileSize: file.size,
       content,
-      currentPage: 1 // Initialize to page 1
+      currentPage: 1, // Initialize to page 1
+      notebookId: undefined,
+      sourceId: undefined
     };
 
-    // Save to database
+    // Save initial book record
     const savedBook = addBook(newBook);
 
-    return NextResponse.json({
-      success: true,
-      data: savedBook
-    });
+    // Process with Open Notebook in background
+    try {
+      // Create notebook in Open Notebook
+      const notebookResponse = await openNotebookClient.createNotebook({
+        name: title,
+        description: `E-book: ${title} by ${author || 'Unknown'}`
+      });
+
+      // Create source with the book content
+      const sourceResponse = await openNotebookClient.createSource({
+        notebook_id: notebookResponse.id,
+        type: 'text',
+        content: content,
+        embed: true // Enable embeddings for Q&A
+      });
+
+      // Update book record with Open Notebook IDs
+      const updatedBook = {
+        ...savedBook,
+        notebookId: notebookResponse.id,
+        sourceId: sourceResponse.id
+      };
+
+      // Update the book in database
+      const { updateBook } = await import('@/lib/database');
+      const finalBook = updateBook(savedBook.id, {
+        notebookId: notebookResponse.id,
+        sourceId: sourceResponse.id
+      });
+
+      console.log(`Book ${title} successfully processed with Open Notebook. Notebook ID: ${notebookResponse.id}, Source ID: ${sourceResponse.id}`);
+
+      return NextResponse.json({
+        success: true,
+        data: finalBook || updatedBook,
+        message: 'Book uploaded and processed successfully'
+      });
+
+    } catch (openNotebookError: unknown) {
+      console.error('Failed to process book with Open Notebook:', openNotebookError);
+
+      // Return the book without Open Notebook integration
+      // The Q&A will show an appropriate error message
+      return NextResponse.json({
+        success: true,
+        data: savedBook,
+        warning: 'Book uploaded but AI processing failed. Q&A features may not be available.',
+        openNotebookError: openNotebookError instanceof Error ? openNotebookError.message : String(openNotebookError)
+      });
+    }
   } catch (error) {
     console.error('Error uploading book:', error);
     return NextResponse.json(

@@ -1,0 +1,3 @@
+[submodule "open-notebook"]
+	path = open-notebook
+	url = git@github.com:AtlantixJJ/open-notebook.git
