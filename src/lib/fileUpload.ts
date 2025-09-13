@@ -35,7 +35,9 @@ export async function saveUploadedFile(file: File): Promise<UploadResult> {
       fs.mkdirSync(coversDir, { recursive: true });
     }
     
-    const coverFilename = uniqueFilename.replace(/\.[^/.]+$/, '.svg');
+    // Use PNG for PDF and EPUB covers, SVG for others
+    const coverExtension = (file.type === 'application/pdf' || file.type === 'application/epub+zip') ? '.png' : '.svg';
+    const coverFilename = uniqueFilename.replace(/\.[^/.]+$/, coverExtension);
     const coverPath = path.join(coversDir, coverFilename);
     
     return {
@@ -53,13 +55,205 @@ export async function saveUploadedFile(file: File): Promise<UploadResult> {
   }
 }
 
+// Extract PDF cover page as image
+export async function extractPDFCover(
+  pdfPath: string,
+  coverPath: string
+): Promise<boolean> {
+  try {
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execAsync = util.promisify(exec);
+    
+    // Use pdftoppm directly for more reliable conversion
+    const tempOutputPath = path.join(path.dirname(coverPath), 'temp_cover');
+    const command = `pdftoppm -png -f 1 -l 1 -scale-to 300 "${pdfPath}" "${tempOutputPath}"`;
+    
+    console.log('Executing command:', command);
+    const { stdout, stderr } = await execAsync(command);
+    
+    if (stderr) {
+      console.log('pdftoppm stderr:', stderr);
+    }
+    
+    // Find the generated file
+    const generatedFiles = fs.readdirSync(path.dirname(coverPath))
+      .filter(file => file.startsWith('temp_cover') && file.endsWith('.png'));
+    
+    if (generatedFiles.length > 0) {
+      const generatedFile = path.join(path.dirname(coverPath), generatedFiles[0]);
+      
+      // Rename to our target cover path
+      if (fs.existsSync(generatedFile)) {
+        fs.renameSync(generatedFile, coverPath);
+        console.log(`PDF cover extracted successfully: ${coverPath}`);
+        return true;
+      }
+    }
+    
+    console.log('PDF cover extraction failed, no image generated');
+    return false;
+  } catch (error) {
+    console.error('Error extracting PDF cover:', error);
+    return false;
+  }
+}
+
+// Extract EPUB cover image
+export async function extractEPUBCover(
+  epubPath: string,
+  coverPath: string
+): Promise<boolean> {
+  try {
+    const sharp = require('sharp');
+    const { exec } = require('child_process');
+    const util = require('util');
+    const execAsync = util.promisify(exec);
+    
+    // First, list the contents of the EPUB to find cover images
+    const listCommand = `unzip -l "${epubPath}"`;
+    console.log('Listing EPUB contents:', listCommand);
+    
+    const { stdout: listOutput } = await execAsync(listCommand);
+    console.log('EPUB contents:', listOutput);
+    
+    // Look for cover images in the file listing
+    const coverPatterns = [
+      /cover\.(jpg|jpeg|png|gif)/i,
+      /title\.(jpg|jpeg|png|gif)/i,
+      /front\.(jpg|jpeg|png|gif)/i,
+      /.*cover.*\.(jpg|jpeg|png|gif)/i,
+      /.*title.*\.(jpg|jpeg|png|gif)/i,
+      /.*front.*\.(jpg|jpeg|png|gif)/i
+    ];
+    
+    let coverImagePath = null;
+    const lines = listOutput.split('\n');
+    
+    for (const line of lines) {
+      for (const pattern of coverPatterns) {
+        const match = line.match(pattern);
+        if (match) {
+          // Extract the full path from the line
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 4) {
+            coverImagePath = parts[parts.length - 1];
+            console.log('Found potential cover image:', coverImagePath);
+            break;
+          }
+        }
+      }
+      if (coverImagePath) break;
+    }
+    
+    // If no cover found by pattern, look for any image file
+    if (!coverImagePath) {
+      const imagePattern = /\.(jpg|jpeg|png|gif)$/i;
+      for (const line of lines) {
+        const match = line.match(imagePattern);
+        if (match) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 4) {
+            coverImagePath = parts[parts.length - 1];
+            console.log('Using first image as cover:', coverImagePath);
+            break;
+          }
+        }
+      }
+    }
+    
+    if (!coverImagePath) {
+      console.log('No cover image found in EPUB');
+      return false;
+    }
+    
+    // Extract the cover image
+    const tempDir = path.join(path.dirname(coverPath), 'temp_epub_extract');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    const extractCommand = `unzip -j "${epubPath}" "${coverImagePath}" -d "${tempDir}"`;
+    console.log('Extracting cover image:', extractCommand);
+    
+    await execAsync(extractCommand);
+    
+    // Find the extracted file
+    const extractedFiles = fs.readdirSync(tempDir);
+    if (extractedFiles.length === 0) {
+      console.log('No files extracted from EPUB');
+      return false;
+    }
+    
+    const extractedFile = path.join(tempDir, extractedFiles[0]);
+    console.log('Extracted file:', extractedFile);
+    
+    // Process the image with Sharp
+    try {
+      const resizedImage = await sharp(extractedFile)
+        .resize(300, 400, {
+          fit: 'contain',
+          background: { r: 255, g: 255, b: 255, alpha: 1 }
+        })
+        .png()
+        .toBuffer();
+      
+      // Save the resized image
+      fs.writeFileSync(coverPath, resizedImage);
+      console.log(`EPUB cover extracted successfully: ${coverPath}`);
+      
+      // Clean up temp directory
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      
+      return true;
+    } catch (sharpError) {
+      console.error('Error processing EPUB cover with Sharp:', sharpError);
+      
+      // Clean up temp directory
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      
+      return false;
+    }
+  } catch (error) {
+    console.error('Error extracting EPUB cover:', error);
+    return false;
+  }
+}
+
 // Generate a simple cover image (placeholder)
 export async function generateBookCover(
   title: string, 
   fileType: string, 
-  coverPath: string
+  coverPath: string,
+  filePath?: string
 ): Promise<boolean> {
   try {
+    // For PDFs, try to extract the cover page first
+    if (fileType === 'pdf' && filePath) {
+      const coverExtracted = await extractPDFCover(filePath, coverPath);
+      if (coverExtracted) {
+        return true;
+      }
+      console.log('PDF cover extraction failed, falling back to generated cover');
+      
+      // If PDF extraction failed, change the cover path to SVG
+      const svgCoverPath = coverPath.replace('.png', '.svg');
+      coverPath = svgCoverPath;
+    }
+    
+    // For EPUBs, try to extract the cover image first
+    if (fileType === 'epub' && filePath) {
+      const coverExtracted = await extractEPUBCover(filePath, coverPath);
+      if (coverExtracted) {
+        return true;
+      }
+      console.log('EPUB cover extraction failed, falling back to generated cover');
+      
+      // If EPUB extraction failed, change the cover path to SVG
+      const svgCoverPath = coverPath.replace('.png', '.svg');
+      coverPath = svgCoverPath;
+    }
+
     // Create an enhanced SVG cover with better styling
     const coverContent = `
     <svg width="300" height="400" xmlns="http://www.w3.org/2000/svg">
