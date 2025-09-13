@@ -300,9 +300,9 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
 
   // Utility function to find the best break point at punctuation
   const findBestBreakPoint = useCallback((text: string, maxLength: number): number => {
-    console.log(`findBestBreakPoint called: text.length=${text.length}, maxLength=${maxLength}`);
+    // console.log(`findBestBreakPoint called: text.length=${text.length}, maxLength=${maxLength}`);
     if (text.length <= maxLength) {
-      console.log(`Text length <= maxLength, returning ${text.length}`);
+      // console.log(`Text length <= maxLength, returning ${text.length}`);
       return text.length;
     }
     
@@ -343,14 +343,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     }
     
     // If no good break point found, break at the maximum length
-    console.log(`No good break point found, returning maxLength: ${maxLength}`);
+    // console.log(`No good break point found, returning maxLength: ${maxLength}`);
     return maxLength;
   }, []);
 
   // Utility function to chunk content with smart punctuation-based breaking
   const chunkContent = useCallback((content: string): ContentChunk[] => {
-    console.log('chunkContent called with content length:', content.length);
-    console.log('Content preview:', content.substring(0, 100));
+    // console.log('chunkContent called with content length:', content.length);
+    // console.log('Content preview:', content.substring(0, 100));
     
     const chunks: ContentChunk[] = [];
     let currentChunk = '';
@@ -361,17 +361,17 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     
     // Split content into lines for processing
     const lines = content.split('\n');
-    console.log('Lines count:', lines.length);
-    console.log('First few lines:', lines.slice(0, 3));
+    // console.log('Lines count:', lines.length);
+    // console.log('First few lines:', lines.slice(0, 3));
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const potentialChunk = currentChunk + (currentChunk ? '\n' : '') + line;
       
-      if (i < 5) { // Debug first few iterations
-        console.log(`Line ${i}:`, line);
-        console.log(`Potential chunk length:`, potentialChunk.length);
-      }
+      // if (i < 5) { // Debug first few iterations
+      //   console.log(`Line ${i}:`, line);
+      //   console.log(`Potential chunk length:`, potentialChunk.length);
+      // }
 
       // Check if we're in table of contents section (only for first few pages)
       if (pageNumber <= 5 && (
@@ -408,17 +408,17 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         currentChunkSize = CHUNK_SIZE; // Full chunk size for all non-TOC pages
       }
       
-      if (i < 5) { // Debug first few iterations
-        console.log(`Chunk size:`, currentChunkSize, `isInTOC:`, isInTOC, `pageNumber:`, pageNumber);
-      }
+      // if (i < 5) { // Debug first few iterations
+      //   console.log(`Chunk size:`, currentChunkSize, `isInTOC:`, isInTOC, `pageNumber:`, pageNumber);
+      // }
 
       // Check if adding this line would exceed chunk size
       if (potentialChunk.length > currentChunkSize && currentChunk) {
-        console.log(`Creating chunk at line ${i}, potentialChunk.length: ${potentialChunk.length}, currentChunkSize: ${currentChunkSize}`);
+        // console.log(`Creating chunk at line ${i}, potentialChunk.length: ${potentialChunk.length}, currentChunkSize: ${currentChunkSize}`);
         
         // Find the best break point using punctuation
         const breakPoint = findBestBreakPoint(currentChunk, currentChunkSize);
-        console.log(`Break point found: ${breakPoint}`);
+        // console.log(`Break point found: ${breakPoint}`);
         
         if (breakPoint > 0) {
           const chunkContent = currentChunk.substring(0, breakPoint).trim();
@@ -429,7 +429,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
             page: pageNumber,
             chapter: chapterTitle || currentChapter
           });
-          console.log(`Created chunk ${chunkIndex} with content length: ${chunkContent.length}`);
+          // console.log(`Created chunk ${chunkIndex} with content length: ${chunkContent.length}`);
           
           // Keep the remaining content and add the current line
           currentChunk = currentChunk.substring(breakPoint).trim() + (line ? '\n' + line : '');
@@ -442,7 +442,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
             page: pageNumber,
             chapter: chapterTitle || currentChapter
           });
-          console.log(`Created fallback chunk ${chunkIndex} with content length: ${currentChunk.length}`);
+          // console.log(`Created fallback chunk ${chunkIndex} with content length: ${currentChunk.length}`);
           currentChunk = line;
         }
         
@@ -454,7 +454,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     }
 
     // Add the last chunk if it exists
-    console.log(`Final currentChunk length: ${currentChunk.length}, trimmed: ${currentChunk.trim().length}`);
+    // console.log(`Final currentChunk length: ${currentChunk.length}, trimmed: ${currentChunk.trim().length}`);
     if (currentChunk.trim()) {
       const chapterTitle = extractChapterTitle(currentChunk);
       chunks.push({
@@ -463,19 +463,19 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         page: pageNumber,
         chapter: chapterTitle || (currentChapter && currentChapter !== 'Steve Jobs' ? currentChapter : undefined)
       });
-      console.log(`Created final chunk ${chunkIndex} with content length: ${currentChunk.length}`);
+      // console.log(`Created final chunk ${chunkIndex} with content length: ${currentChunk.length}`);
     }
     
-    console.log(`Total chunks created: ${chunks.length}`);
+    // console.log(`Total chunks created: ${chunks.length}`);
 
-    console.log('chunkContent result:', {
-      chunksLength: chunks.length,
-      chunks: chunks.slice(0, 2) // Show first 2 chunks for debugging
-    });
+    // console.log('chunkContent result:', {
+    //   chunksLength: chunks.length,
+    //   chunks: chunks.slice(0, 2) // Show first 2 chunks for debugging
+    // });
     
     // Emergency fallback: if no chunks were created, create one with the entire content
     if (chunks.length === 0 && content.trim().length > 0) {
-      console.log('No chunks created, creating emergency chunk with full content');
+      // console.log('No chunks created, creating emergency chunk with full content');
       chunks.push({
         id: 'emergency-chunk-full',
         content: content,
@@ -534,12 +534,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       return updated;
     });
     
-    console.log('Expanded chunks up:', { 
-      requestedChunks: newChunks.length,
-      uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
-      newStartIndex, 
-      currentFirstIndex 
-    });
+    // console.log('Expanded chunks up:', { 
+    //   requestedChunks: newChunks.length,
+    //   uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+    //   newStartIndex, 
+    //   currentFirstIndex 
+    // });
     
     setTimeout(() => setIsLoadingChunks(false), 100);
   }, [contentChunks, loadedChunks]);
@@ -583,12 +583,12 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       return updated;
     });
     
-    console.log('Expanded chunks down:', { 
-      requestedChunks: newChunks.length,
-      uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
-      currentLastIndex, 
-      newEndIndex 
-    });
+    // console.log('Expanded chunks down:', { 
+    //   requestedChunks: newChunks.length,
+    //   uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+    //   currentLastIndex, 
+    //   newEndIndex 
+    // });
     
     setTimeout(() => setIsLoadingChunks(false), 100);
   }, [contentChunks, loadedChunks]);
@@ -618,13 +618,13 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     
     // Check if we should expand up (user scrolled near the top)
     if (scrollPercentage < expandUpThreshold && timeSinceLastLoad > minLoadInterval) {
-      console.log('Expanding chunks up - user near top:', { scrollPercentage });
+      // console.log('Expanding chunks up - user near top:', { scrollPercentage });
       setLastLoadTime(now);
       expandChunksUp();
     }
     // Check if we should expand down (user scrolled near the bottom)
     else if (scrollPercentage > expandDownThreshold && timeSinceLastLoad > minLoadInterval) {
-      console.log('Expanding chunks down - user near bottom:', { scrollPercentage });
+      // console.log('Expanding chunks down - user near bottom:', { scrollPercentage });
       setLastLoadTime(now);
       expandChunksDown();
     }
@@ -633,7 +633,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   // Load book content from API
   useEffect(() => {
     const loadBook = async () => {
-      console.log('Starting to load book, setting isProcessing to true');
+      // console.log('Starting to load book, setting isProcessing to true');
       setIsProcessing(true);
       try {
         // Add a test message with references for debugging
@@ -655,22 +655,22 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
           references: ['test-ref-6-37']
         };
         
-        console.log('Setting up test data...');
+        // console.log('Setting up test data...');
         setReferences({ [testRef.id]: testRef });
         setChatMessages([testMessage]);
         
-        console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
-        console.log('Test message:', testMessage);
-        console.log('Test reference:', testRef);
+        // console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
+        // console.log('Test message:', testMessage);
+        // console.log('Test reference:', testRef);
         
         // Optimize: Only fetch the specific book instead of all books
         const response = await fetch(`/api/books/${id}`);
         if (response.ok) {
           const data = await response.json();
-          console.log('Single book API response:', data);
+          // console.log('Single book API response:', data);
           if (data.success) {
             const book = data.data; // Single book endpoint returns the book directly
-            console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
+            // console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
             if (book) {
               setBookMetadata(book);
               setBookContent(book.content || 'No content available');
@@ -693,7 +693,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
               // Ensure we always have at least some chunks loaded
               const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
               
-              console.log('Setting loaded chunks:', finalLoadedChunks);
+              // console.log('Setting loaded chunks:', finalLoadedChunks);
               setLoadedChunks(finalLoadedChunks);
               setCurrentChunkIndex(initialChunkIndex);
               
@@ -709,22 +709,22 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         const response = await fetch('/api/books');
         const data = await response.json();
         
-        console.log('API response:', { success: data.success, dataLength: data.data?.length });
+        // console.log('API response:', { success: data.success, dataLength: data.data?.length });
         
         if (data.success) {
           const book = data.data.find((b: any) => b.id === id);
-          console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
+          // console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
           if (book) {
             setBookMetadata(book);
             const bookContent = book.content || 'No content available';
             setBookContent(bookContent);
             
-            console.log('Book content length:', bookContent.length);
-            console.log('Book content preview:', bookContent.substring(0, 200));
+            // console.log('Book content length:', bookContent.length);
+            // console.log('Book content preview:', bookContent.substring(0, 200));
               
               // Test chunking with a simple string first
-              const testChunks = chunkContent('This is a test. This should create at least one chunk.');
-              console.log('Test chunking result:', testChunks);
+              // const testChunks = chunkContent('This is a test. This should create at least one chunk.');
+              // console.log('Test chunking result:', testChunks);
               
               // Chunk the content for better performance
               const chunks = chunkContent(bookContent);
@@ -744,15 +744,15 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
               // Ensure we always have at least some chunks loaded
               const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
               
-              console.log('Initializing progressive loading:', {
-                totalChunks: chunks.length,
-                initialChunkIndex,
-                loadedChunksCount: finalLoadedChunks.length,
-                startIndex,
-                endIndex
-              });
+              // console.log('Initializing progressive loading:', {
+              //   totalChunks: chunks.length,
+              //   initialChunkIndex,
+              //   loadedChunksCount: finalLoadedChunks.length,
+              //   startIndex,
+              //   endIndex
+              // });
               
-              console.log('Setting loaded chunks:', finalLoadedChunks);
+              // console.log('Setting loaded chunks:', finalLoadedChunks);
               setLoadedChunks(finalLoadedChunks);
               setCurrentChunkIndex(initialChunkIndex);
               
@@ -766,7 +766,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         }
       } catch (error) {
         console.error('Error loading book:', error);
-        console.log('Falling back to mock content');
+        // console.log('Falling back to mock content');
         // Fallback to mock content
         const mockContent = `
 # Chapter 1: The Beginning
@@ -836,11 +836,11 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
         // Ensure we always have at least some chunks loaded
         const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
         
-        console.log('Setting loaded chunks (mock):', finalLoadedChunks);
+        // console.log('Setting loaded chunks (mock):', finalLoadedChunks);
         setLoadedChunks(finalLoadedChunks);
         setCurrentChunkIndex(0);
       } finally {
-        console.log('Setting isProcessing to false');
+        // console.log('Setting isProcessing to false');
         setIsProcessing(false);
       }
       
@@ -1045,12 +1045,12 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
 
   // Get loaded chunks for progressive loading
   const allChunks = useMemo(() => {
-    console.log('allChunks useMemo:', {
-      loadedChunksLength: loadedChunks.length,
-      contentChunksLength: contentChunks.length,
-      loadedChunks: loadedChunks,
-      contentChunks: contentChunks
-    });
+    // console.log('allChunks useMemo:', {
+    //   loadedChunksLength: loadedChunks.length,
+    //   contentChunksLength: contentChunks.length,
+    //   loadedChunks: loadedChunks,
+    //   contentChunks: contentChunks
+    // });
     return loadedChunks; // Return only loaded chunks for progressive loading
   }, [loadedChunks, contentChunks]);
 
@@ -1296,10 +1296,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
             {/* Book Content */}
             {!isProcessing && (
               <div className="bg-white rounded-xl shadow-lg p-8 h-[calc(100vh-12rem)] flex flex-col relative">
-                {/* Debug info */}
-                <div className="text-xs text-gray-400 mb-2">
-                  Debug: isProcessing={isProcessing.toString()}, allChunks.length={allChunks.length}, loadedChunks.length={loadedChunks.length}
-                </div>
                 <div 
                   ref={contentContainerRef}
                   className="text-gray-800 leading-relaxed flex-1 overflow-y-auto"
@@ -1331,25 +1327,25 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                     </div>
                   )}
                   
-                  {/* Loading indicator for progressive loading */}
-                  {isLoadingChunks && (
+                  {/* Loading indicator for progressive loading - Hidden for clean UI */}
+                  {/* {isLoadingChunks && (
                     <div className="fixed top-4 right-4 bg-amber-100 border border-amber-300 rounded-lg px-4 py-2 shadow-lg z-50">
                       <div className="flex items-center space-x-2">
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600"></div>
                         <span className="text-sm text-amber-800">Expanding content...</span>
                       </div>
                     </div>
-                  )}
+                  )} */}
                 </div>
               </div>
             )}
 
-            {/* Reading Progress Indicator */}
-            <div className="flex justify-center items-center mt-8">
+            {/* Reading Progress Indicator - Hidden for clean UI */}
+            {/* <div className="flex justify-center items-center mt-8">
               <div className="text-sm text-gray-500">
                 Dynamic loading - {loadedChunks.length} chunks loaded (max {MAX_LOADED_CHUNKS})
               </div>
-            </div>
+            </div> */}
           </div>
         </main>
 
