@@ -90,7 +90,11 @@ const ChatMessageComponent = memo(({
           {message.references && message.references.length > 0 && (
             <div className="mt-2 flex items-center space-x-2 flex-wrap">
               <button
-                onClick={() => onToggleReferences(message.id)}
+                onClick={() => {
+                  console.log('Reference button clicked for message:', message.id);
+                  console.log('Message references:', message.references);
+                  onToggleReferences(message.id);
+                }}
                 className="text-xs underline hover:no-underline"
               >
                 {showReferences === message.id ? 'Hide' : 'Show'} References ({message.references.length})
@@ -128,9 +132,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [showPageSelector, setShowPageSelector] = useState(false);
   const [pageInput, setPageInput] = useState('');
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [showReferenceViewer, setShowReferenceViewer] = useState(false);
-  const [referenceContent, setReferenceContent] = useState('');
-  const [referenceOffset, setReferenceOffset] = useState(0);
   
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -368,14 +369,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       setIsProcessing(true);
       try {
         // Add a test message with references for debugging
-        const testMessage: ChatMessage = {
-          id: 'test-message',
-          type: 'assistant',
-          content: 'This is a test message with references to demonstrate the functionality using character offsets 6-37 from book_1757773062667_nr0jeva.',
-          timestamp: new Date(),
-          references: ['test-ref-6-37']
-        };
-        
         const testRef: Reference = {
           id: 'test-ref-6-37',
           content: 'Test reference content from character range 6-37',
@@ -386,10 +379,21 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
           bookId: 'book_1757773062667_nr0jeva'
         };
         
+        const testMessage: ChatMessage = {
+          id: 'test-message',
+          type: 'assistant',
+          content: 'This is a test message with references to demonstrate the functionality using character offsets 6-37 from book_1757773062667_nr0jeva.',
+          timestamp: new Date(),
+          references: ['test-ref-6-37']
+        };
+        
+        console.log('Setting up test data...');
+        setReferences({ 'test-message': [testRef] });
         setChatMessages([testMessage]);
-        setReferences({ 'test-ref-6-37': [testRef] });
         
         console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
+        console.log('Test message:', testMessage);
+        console.log('Test reference:', testRef);
         
         // Optimize: Only fetch the specific book instead of all books
         const response = await fetch(`/api/books/${id}`);
@@ -534,9 +538,11 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     setShowThinkingIndicator(false);
     setHasNewResponse(false);
     
-    // Close chat and show minimized indicator while thinking
-    setIsChatOpen(false);
-    setIsChatMinimized(true);
+    // Close chat and show minimized indicator while thinking (unless in fullscreen mode)
+    if (!isFullscreen) {
+      setIsChatOpen(false);
+      setIsChatMinimized(true);
+    }
 
     try {
       // Call the QA API
@@ -592,7 +598,11 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
       setIsLoading(false);
       setIsThinking(false);
       setShowThinkingIndicator(true);
-      setHasNewResponse(true);
+      
+      // Only set new response notification if not in fullscreen mode
+      if (!isFullscreen) {
+        setHasNewResponse(true);
+      }
       
       // Show thinking indicator for 2 seconds, then show notification
       setTimeout(() => {
@@ -619,53 +629,27 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
       // Toggle chat normally
       setIsChatOpen(!isChatOpen);
       setIsChatMinimized(false);
-      setIsFullscreen(false);
+      // Only exit fullscreen if we're closing the chat
+      if (!isChatOpen) {
+        setIsFullscreen(false);
+      }
     }
   };
 
   const toggleReferences = (messageId: string) => {
     console.log('Toggling references for message:', messageId, 'Current showReferences:', showReferences);
+    console.log('Available references:', references);
+    console.log('References for this message:', references[messageId]);
     setShowReferences(showReferences === messageId ? null : messageId);
   };
 
   const navigateToReference = (pageNumber: number) => {
     setCurrentPage(pageNumber);
-    setShowReferenceViewer(false);
     // Close chat to show the reference
     setIsChatOpen(false);
     setIsChatMinimized(false);
   };
 
-  const loadReferenceContent = (startOffset: number, endOffset?: number) => {
-    if (bookContent) {
-      // If endOffset is provided, use the range; otherwise use startOffset as center point
-      const actualStart = endOffset ? startOffset : Math.max(0, startOffset - 25);
-      const actualEnd = endOffset ? endOffset : Math.min(bookContent.length, startOffset + 25);
-      
-      // Extract content around the range (e.g., 2000 characters before and after)
-      const contextStart = Math.max(0, actualStart - 1000);
-      const contextEnd = Math.min(bookContent.length, actualEnd + 1000);
-      const content = bookContent.substring(contextStart, contextEnd);
-      
-      // Calculate the position of the reference within the context
-      const refStartInContext = actualStart - contextStart;
-      const refEndInContext = actualEnd - contextStart;
-      
-      // Split content into before, reference, and after parts
-      const beforeRef = content.substring(0, refStartInContext);
-      const refText = content.substring(refStartInContext, refEndInContext);
-      const afterRef = content.substring(refEndInContext);
-      
-      // Create highlighted content
-      const highlightedContent = beforeRef + 
-        `<mark class="bg-yellow-200 px-1 rounded">${refText}</mark>` + 
-        afterRef;
-      
-      setReferenceContent(highlightedContent);
-      setReferenceOffset(actualStart);
-      setShowReferenceViewer(true);
-    }
-  };
 
   const loadInlineReferenceContent = (startOffset: number, endOffset?: number) => {
     console.log('Loading inline reference content for book_1757773062667_nr0jeva:', { startOffset, endOffset, bookContentLength: bookContent?.length });
@@ -1113,15 +1097,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold text-gray-900">AI Assistant</h2>
                   <div className="flex items-center space-x-2">
-                    {!isFullscreen && (
-                      <button
-                        onClick={() => setIsChatMinimized(true)}
-                        className="p-1 hover:bg-gray-100 rounded transition-colors"
-                        title="Minimize"
-                      >
-                        <ChevronDown className="h-4 w-4 text-gray-600" />
-                      </button>
-                    )}
                     <button
                       onClick={() => setIsFullscreen(!isFullscreen)}
                       className="p-1 hover:bg-gray-100 rounded transition-colors"
@@ -1173,7 +1148,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                       className="bg-amber-50 border border-amber-200 rounded-lg p-4"
                     >
                       <h4 className="font-semibold text-amber-900 mb-2">References</h4>
-                      {references[showReferences].map((ref) => (
+                      {references[showReferences]?.map((ref: Reference) => (
                         <div key={ref.id} className="mb-4 last:mb-0">
                           <div className="text-sm text-amber-800">
                             <strong>{ref.chapter}</strong>
@@ -1203,14 +1178,14 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
                             exit={{ opacity: 0, height: 0 }}
-                            className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3"
+                            className="mt-4 bg-white border-2 border-blue-200 rounded-lg p-4 shadow-sm"
                           >
-                            <div className="text-xs text-gray-600 mb-2 font-medium">
-                              Book Content Context {ref.startOffset && ref.endOffset && `(Chars ${ref.startOffset}:${ref.endOffset})`}
+                            <div className="text-sm text-blue-700 mb-3 font-semibold border-b border-blue-100 pb-2">
+                              📖 Book Content Context {ref.startOffset && ref.endOffset && `(Chars ${ref.startOffset}:${ref.endOffset})`}
                               {ref.bookId && ` - ${ref.bookId}`}
                             </div>
                             <div 
-                              className="text-sm text-gray-800 leading-relaxed max-h-64 overflow-y-auto"
+                              className="text-base text-gray-800 leading-relaxed max-h-80 overflow-y-auto bg-gray-50 p-3 rounded border"
                               dangerouslySetInnerHTML={{ 
                                 __html: loadInlineReferenceContent(
                                   ref.startOffset || 0, 
@@ -1340,60 +1315,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
         </AnimatePresence>
       </div>
 
-      {/* Reference Viewer Modal */}
-      <AnimatePresence>
-        {showReferenceViewer && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            onClick={() => setShowReferenceViewer(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-xl w-4/5 h-4/5 max-w-6xl mx-4 flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Reference Content</h3>
-                <button
-                  onClick={() => setShowReferenceViewer(false)}
-                  className="p-1 hover:bg-gray-100 rounded transition-colors"
-                >
-                  <X className="h-5 w-5 text-gray-600" />
-                </button>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4">
-                <div className="prose prose-lg max-w-none">
-                  <ReactMarkdown 
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      h1: ({children}) => <h1 className="text-3xl font-bold text-gray-900 mt-0 mb-4">{children}</h1>,
-                      h2: ({children}) => <h2 className="text-2xl font-semibold text-gray-800 mt-0 mb-3">{children}</h2>,
-                      h3: ({children}) => <h3 className="text-xl font-semibold text-gray-700 mt-0 mb-2">{children}</h3>,
-                      p: ({children}) => <p className="mb-4 leading-relaxed text-base">{children}</p>,
-                      ul: ({children}) => <ul className="list-disc list-inside mb-4 space-y-1 ml-2">{children}</ul>,
-                      ol: ({children}) => <ol className="list-none mb-4 space-y-1 ml-2">{children}</ol>,
-                      li: ({children}) => <li className="text-base leading-relaxed">{children}</li>,
-                      strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                      em: ({children}) => <em className="italic text-gray-700">{children}</em>,
-                      blockquote: ({children}) => <blockquote className="border-l-4 border-amber-300 pl-4 italic text-gray-600 my-4 text-base">{children}</blockquote>,
-                      code: ({children}) => <code className="bg-gray-100 px-2 py-1 rounded text-sm font-mono">{children}</code>,
-                      pre: ({children}) => <pre className="bg-gray-100 p-3 rounded-lg overflow-x-auto my-4 text-sm">{children}</pre>,
-                    }}
-                  >
-                    {referenceContent}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Page Selector Modal */}
       <AnimatePresence>
