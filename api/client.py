@@ -308,7 +308,8 @@ class APIClient:
         if transformations:
             data["transformations"] = transformations
 
-        return self._make_request("POST", "/api/sources", json=data)
+        # Use extended timeout for source creation operations (can involve file processing, web scraping, AI)
+        return self._make_request("POST", "/api/sources", json=data, timeout=30000.0)
 
     def get_source(self, source_id: str) -> Dict:
         """Get a specific source."""
