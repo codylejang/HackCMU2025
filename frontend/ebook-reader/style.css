@@ -1,0 +1,225 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: 
+        radial-gradient(ellipse at 20% 50%, rgba(139, 69, 19, 0.3) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(160, 82, 45, 0.4) 0%, transparent 50%),
+        radial-gradient(ellipse at 40% 80%, rgba(101, 67, 33, 0.3) 0%, transparent 50%),
+        linear-gradient(45deg, #8B4513 0%, #A0522D 25%, #CD853F 50%, #DEB887 75%, #F5DEB3 100%);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%;
+    min-height: 100vh;
+    position: relative;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: 
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(139, 69, 19, 0.1) 2px,
+            rgba(139, 69, 19, 0.1) 4px
+        ),
+        repeating-linear-gradient(
+            0deg,
+            transparent,
+            transparent 1px,
+            rgba(160, 82, 45, 0.05) 1px,
+            rgba(160, 82, 45, 0.05) 2px
+        );
+    pointer-events: none;
+    z-index: -1;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+h1 {
+    color: white;
+    text-align: center;
+    margin-bottom: 30px;
+    font-size: 2.5rem;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.bookshelf {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 20px;
+    background: 
+        linear-gradient(135deg, rgba(139, 69, 19, 0.8) 0%, rgba(160, 82, 45, 0.9) 50%, rgba(101, 67, 33, 0.8) 100%),
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 3px,
+            rgba(139, 69, 19, 0.2) 3px,
+            rgba(139, 69, 19, 0.2) 6px
+        );
+    border-radius: 15px;
+    backdrop-filter: blur(5px);
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+    border: 2px solid rgba(139, 69, 19, 0.3);
+}
+
+.upload-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    order: -1; /* This ensures it stays at the top-left */
+}
+
+.upload-area:hover {
+    transform: scale(1.05);
+}
+
+.upload-button {
+    width: 150px;
+    height: 200px;
+    border: 3px dashed rgba(255, 255, 255, 0.6);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: 
+        linear-gradient(135deg, rgba(139, 69, 19, 0.3) 0%, rgba(160, 82, 45, 0.4) 50%, rgba(101, 67, 33, 0.3) 100%),
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(139, 69, 19, 0.1) 2px,
+            rgba(139, 69, 19, 0.1) 4px
+        );
+    transition: all 0.3s ease;
+    position: relative;
+    box-shadow: 
+        0 4px 15px rgba(0, 0, 0, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.upload-button:hover {
+    background: 
+        linear-gradient(135deg, rgba(139, 69, 19, 0.5) 0%, rgba(160, 82, 45, 0.6) 50%, rgba(101, 67, 33, 0.5) 100%),
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 2px,
+            rgba(139, 69, 19, 0.15) 2px,
+            rgba(139, 69, 19, 0.15) 4px
+        );
+    border-color: #4CAF50;
+    transform: scale(1.02);
+}
+
+.plus-sign {
+    font-size: 4rem;
+    color: white;
+    font-weight: bold;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.upload-text {
+    color: white;
+    margin-top: 10px;
+    font-size: 1rem;
+    font-weight: 500;
+    text-align: center;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+}
+
+.book-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+}
+
+.book-item:hover {
+    transform: translateY(-5px);
+}
+
+.book-cover {
+    width: 150px;
+    height: 200px;
+    border-radius: 10px;
+    box-shadow: 
+        0 4px 15px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+    object-fit: cover;
+    background: 
+        linear-gradient(135deg, #8B4513 0%, #A0522D 25%, #CD853F 50%, #DEB887 75%, #F5DEB3 100%),
+        repeating-linear-gradient(
+            90deg,
+            transparent,
+            transparent 1px,
+            rgba(139, 69, 19, 0.1) 1px,
+            rgba(139, 69, 19, 0.1) 2px
+        );
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    color: #4A2C17;
+    text-align: center;
+    padding: 10px;
+    word-wrap: break-word;
+    font-weight: 600;
+    text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(139, 69, 19, 0.3);
+}
+
+.book-title {
+    color: white;
+    margin-top: 10px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-align: center;
+    max-width: 150px;
+    word-wrap: break-word;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+    line-height: 1.2;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .bookshelf {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 15px;
+        padding: 15px;
+    }
+    
+    .upload-button,
+    .book-cover {
+        width: 120px;
+        height: 160px;
+    }
+    
+    .plus-sign {
+        font-size: 3rem;
+    }
+    
+    h1 {
+        font-size: 2rem;
+    }
+}

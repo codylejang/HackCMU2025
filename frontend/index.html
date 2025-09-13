@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Book Library</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>My E-Book Library</h1>
+        <div class="bookshelf">
+            <div class="upload-area" id="uploadArea">
+                <input type="file" id="fileInput" accept=".pdf,.epub,.mobi,.txt" multiple style="display: none;">
+                <div class="upload-button">
+                    <span class="plus-sign">+</span>
+                </div>
+                <div class="upload-text">Upload E-Book</div>
+            </div>
+            <div class="books-container" id="booksContainer">
+                <!-- Book covers will be dynamically added here -->
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
