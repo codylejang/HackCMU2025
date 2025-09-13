@@ -3,10 +3,10 @@ import { updateBook } from '@/lib/database';
 
 export async function PUT(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params;
+    const { id } = await params;
     const { currentPage } = await request.json();
 
     console.log('API: Updating current page:', { id, currentPage });
@@ -45,7 +45,7 @@ export async function PUT(
 
 export async function POST(
   request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   // Handle sendBeacon requests (which use POST)
   return PUT(request, { params });

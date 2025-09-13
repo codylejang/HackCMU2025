@@ -37,6 +37,7 @@ trap cleanup SIGINT SIGTERM
 # Start backend server
 echo "🚀 Starting Backend API Server..."
 cd "$BACKEND_DIR"
+echo "📁 Backend working directory: $(pwd)"
 python3 start_backend.py &
 BACKEND_PID=$!
 

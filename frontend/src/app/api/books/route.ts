@@ -72,8 +72,42 @@ export async function POST(request: NextRequest) {
       content = `# ${file.name}\n\n**Error:** Content extraction failed.\n\n**Details:** ${error instanceof Error ? error.message : 'Unknown error'}\n\n**File Type:** ${fileType.toUpperCase()}\n\n**Note:** The file was uploaded but content could not be extracted.`;
     }
 
+    // Extract proper title from file metadata
+    let title = file.name.replace(/\.[^/.]+$/, ""); // Default to filename
+    let bookAuthor = 'Unknown';
+    
+    // For EPUB files, try to extract actual title and author from metadata
+    if (fileType === 'epub') {
+      try {
+        const epub = require('epub');
+        const epubInstance = new epub(uploadResult.filePath!);
+        
+        await new Promise((resolve, reject) => {
+          epubInstance.on('end', () => {
+            if (epubInstance.metadata) {
+              if (epubInstance.metadata.title) {
+                title = epubInstance.metadata.title;
+              }
+              if (epubInstance.metadata.creator) {
+                bookAuthor = epubInstance.metadata.creator;
+              }
+            }
+            resolve(true);
+          });
+          
+          epubInstance.on('error', (err: any) => {
+            console.log('EPUB metadata extraction failed, using filename:', err);
+            resolve(true); // Continue with filename as fallback
+          });
+          
+          epubInstance.parse();
+        });
+      } catch (error) {
+        console.log('EPUB metadata extraction failed, using filename:', error);
+      }
+    }
+    
     // Generate book cover with error handling
-    const title = file.name.replace(/\.[^/.]+$/, "");
     let finalCoverPath = uploadResult.coverPath!;
     try {
       const coverGenerated = await generateBookCover(title, fileType, uploadResult.coverPath!, uploadResult.filePath);
@@ -95,7 +129,7 @@ export async function POST(request: NextRequest) {
     const newBook = {
       id: uploadResult.bookId!,
       title,
-      author: author || 'Unknown',
+      author: bookAuthor,
       fileType: fileType as 'pdf' | 'epub' | 'txt',
       uploadDate: new Date().toISOString(),
       filePath: uploadResult.filePath!,

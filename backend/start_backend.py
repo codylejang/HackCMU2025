@@ -34,6 +34,8 @@ def main():
     
     try:
         # Start the simple API server
+        print(f"🔧 Running from directory: {backend_dir}")
+        print(f"🐍 Using Python: {sys.executable}")
         process = subprocess.Popen([
             sys.executable, "simple_api_server.py"
         ], env=env, cwd=backend_dir)
