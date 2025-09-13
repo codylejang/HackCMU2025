@@ -56,19 +56,21 @@ const MAX_LOADED_CHUNKS = 50; // Maximum number of chunks to keep in memory
 
 // Memoized chat message component
 const ChatMessageComponent = memo(({ 
-  message, 
-  showReferences, 
-  references, 
-  onToggleReferences,
+  message,
   isFullscreen,
-  onNavigateToReference
+  refGroups,
+  openRefMessageId,
+  openRefId,
+  onToggleRef,
+  renderRefBlock
 }: {
   message: ChatMessage;
-  showReferences: string | null;
-  references: Record<string, Reference>;
-  onToggleReferences: (messageId: string) => void;
   isFullscreen: boolean;
-  onNavigateToReference: (pageNumber: number) => void;
+  refGroups: Record<number, string[]>;
+  openRefMessageId: string | null;
+  openRefId: string | null;
+  onToggleRef: (messageId: string, refId: string) => void;
+  renderRefBlock: (refId: string) => React.ReactNode;
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
@@ -90,29 +92,44 @@ const ChatMessageComponent = memo(({
           <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
         )}
         <div className="flex-1">
-          <p className={isFullscreen ? 'text-base' : 'text-sm'}>{message.content}</p>
-          {message.references && message.references.length > 0 && (
-            <div className="mt-2 flex items-center space-x-2 flex-wrap">
-              <button
-                onClick={() => {
-                  onToggleReferences(message.id);
-                }}
-                className="text-xs inline-flex items-center space-x-2"
-                title="Toggle references"
-              >
-                <span className="w-5 h-5 rounded-full border border-current flex items-center justify-center">
-                  {showReferences === message.id ? (
-                    <ChevronDown className="h-3 w-3" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3" />
-                  )}
-                </span>
-                <span>
-                  References ({message.references.length})
-                </span>
-              </button>
-            </div>
-          )}
+          {(() => {
+            const paragraphs = message.content.split(/\n{2,}/);
+            return (
+              <div>
+                {paragraphs.map((para, idx) => (
+                  <div key={`${message.id}_p_${idx}`} className="mb-2 last:mb-0">
+                    <p className={isFullscreen ? 'text-base' : 'text-sm'}>{para}</p>
+                    {refGroups[idx] && refGroups[idx].length > 0 && (
+                      <div className="mt-1 flex items-center space-x-2 flex-wrap">
+                        {refGroups[idx].map((refId) => (
+                          <button
+                            key={refId}
+                            onClick={() => onToggleRef(message.id, refId)}
+                            className="text-[11px] inline-flex items-center space-x-1 text-amber-700 hover:text-amber-800"
+                            title="Toggle reference"
+                          >
+                            <span className="w-4 h-4 rounded-full border border-current flex items-center justify-center">
+                              {openRefMessageId === message.id && openRefId === refId ? (
+                                <ChevronDown className="h-3 w-3" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3" />
+                              )}
+                            </span>
+                            <span>Reference ({refGroups[idx].length})</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {openRefMessageId === message.id && refGroups[idx]?.includes(openRefId || '') && (
+                      <div className="mt-2">
+                        {openRefId ? renderRefBlock(openRefId) : null}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -132,7 +149,10 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [isLoading, setIsLoading] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [showThinkingIndicator, setShowThinkingIndicator] = useState(false);
-  const [showReferences, setShowReferences] = useState<string | null>(null);
+  const [openRefMessageId, setOpenRefMessageId] = useState<string | null>(null);
+  const [openRefId, setOpenRefId] = useState<string | null>(null);
+  const [showPageSelector, setShowPageSelector] = useState(false);
+  const [pageInput, setPageInput] = useState('');
   const [references, setReferences] = useState<Record<string, Reference>>({});
   const [bookContent, setBookContent] = useState<string>('');
   const [contentChunks, setContentChunks] = useState<ContentChunk[]>([]);
@@ -636,32 +656,94 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       // console.log('Starting to load book, setting isProcessing to true');
       setIsProcessing(true);
       try {
-        // Add a test message with references for debugging
-        const testRef: Reference = {
-          id: 'test-ref-6-37',
-          content: 'Test reference content from character range 6-37',
-          chapter: 'Test Chapter',
-          page: 1,
-          startOffset: 6,
-          endOffset: 37,
-          bookId: 'book_1757773062667_nr0jeva'
-        };
-        
+        // Add a test message with multiple references per paragraph and different books
+        const testRefs: Reference[] = [
+          // First paragraph - 2 references from current book
+          {
+            id: 'ref-para-1a',
+            content: 'answering',
+            chapter: 'Current Book Chapter 1',
+            page: 1,
+            startOffset: 10,
+            endOffset: 20,
+            bookId: id
+          },
+          {
+            id: 'ref-para-1b',
+            content: 'something',
+            chapter: 'Current Book Chapter 2',
+            page: 3,
+            startOffset: 50,
+            endOffset: 60,
+            bookId: id
+          },
+          // Second paragraph - 2 references from different book
+          {
+            id: 'ref-para-2a',
+            content: 'elaborates',
+            chapter: 'Other Book Chapter 1',
+            page: 1,
+            startOffset: 30,
+            endOffset: 40,
+            bookId: 'other-book-123'
+          },
+          {
+            id: 'ref-para-2b',
+            content: 'further',
+            chapter: 'Other Book Chapter 2',
+            page: 5,
+            startOffset: 80,
+            endOffset: 90,
+            bookId: 'other-book-123'
+          },
+          // Third paragraph - 3 references from different books
+          {
+            id: 'ref-para-3a',
+            content: 'concludes',
+            chapter: 'Current Book Chapter 3',
+            page: 2,
+            startOffset: 110,
+            endOffset: 120,
+            bookId: id
+          },
+          {
+            id: 'ref-para-3b',
+            content: 'thought',
+            chapter: 'Third Book Chapter 1',
+            page: 1,
+            startOffset: 25,
+            endOffset: 35,
+            bookId: 'third-book-456'
+          },
+          {
+            id: 'ref-para-3c',
+            content: 'analysis',
+            chapter: 'Other Book Chapter 3',
+            page: 7,
+            startOffset: 150,
+            endOffset: 160,
+            bookId: 'other-book-123'
+          }
+        ];
+
         const testMessage: ChatMessage = {
           id: 'test-message',
           type: 'assistant',
-          content: 'This is a test message with references to demonstrate the functionality using character offsets 6-37 from book_1757773062667_nr0jeva.',
+          content: 'Para one answering something with multiple references.\n\nPara two that elaborates further with cross-book citations.\n\nPara three concludes the thought with comprehensive analysis.',
           timestamp: new Date(),
-          references: ['test-ref-6-37']
+          references: testRefs.map(r => r.id)
         };
-        
-        // console.log('Setting up test data...');
-        setReferences({ [testRef.id]: testRef });
+
+        const refsMap: Record<string, Reference> = {};
+        testRefs.forEach(r => { refsMap[r.id] = r; });
+
+        console.log('Setting up test data...');
+        setReferences(refsMap);
         setChatMessages([testMessage]);
         
-        // console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
-        // console.log('Test message:', testMessage);
-        // console.log('Test reference:', testRef);
+        console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
+        console.log('Test message:', testMessage);
+        console.log('Test references:', testRefs);
         
         // Optimize: Only fetch the specific book instead of all books
         const response = await fetch(`/api/books/${id}`);
@@ -971,9 +1053,14 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     }
   };
 
-  const toggleReferences = (messageId: string) => {
-    const willOpen = showReferences !== messageId;
-    setShowReferences(willOpen ? messageId : null);
+  const toggleRef = (messageId: string, refId: string) => {
+    if (openRefMessageId === messageId && openRefId === refId) {
+      setOpenRefMessageId(null);
+      setOpenRefId(null);
+    } else {
+      setOpenRefMessageId(messageId);
+      setOpenRefId(refId);
+    }
   };
 
   const navigateToReference = (pageNumber: number) => {
@@ -982,7 +1069,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     setIsChatOpen(false);
     setIsChatMinimized(false);
   };
-
 
   const loadInlineReferenceContent = (startOffset: number, endOffset?: number) => {
     console.log('Loading inline reference content for book_1757773062667_nr0jeva:', { startOffset, endOffset, bookContentLength: bookContent?.length });
@@ -1022,7 +1108,46 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     return '';
   };
 
-
+  // When expanding references for a message, prefetch any referenced book contents not yet loaded
+  useEffect(() => {
+    const prefetchReferencedBooks = async () => {
+      if (!openRefMessageId || !openRefId) return;
+      const msg = chatMessages.find(m => m.id === openRefMessageId);
+      if (!msg || !msg.references) return;
+      const bookIds = new Set<string>();
+      for (const refId of msg.references) {
+        const ref = references[refId];
+        if (ref && ref.bookId && ref.bookId !== id) {
+          bookIds.add(ref.bookId);
+        }
+      }
+      for (const bookId of bookIds) {
+        if (referencedBooks[bookId] || loadingBookIds[bookId]) continue;
+        setLoadingBookIds(prev => ({ ...prev, [bookId]: true }));
+        try {
+          const resp = await fetch(`/api/books/${bookId}`);
+          if (!resp.ok) throw new Error('Failed to fetch referenced book');
+          const data = await resp.json();
+          if (!data.success || !data.data?.content) throw new Error('Invalid referenced book data');
+          const book = data.data;
+          const chunks = chunkContent(book.content || '');
+          // compute chunk starts
+          const starts: number[] = [];
+          let acc = 0;
+          for (const ch of chunks) {
+            starts.push(acc);
+            acc += ch.content.length;
+          }
+          setReferencedBooks(prev => ({ ...prev, [bookId]: { content: book.content || '', chunks, chunkStarts: starts, title: book.title } }));
+        } catch (e) {
+          console.error('Error prefetching referenced book', bookId, e);
+        } finally {
+          setLoadingBookIds(prev => ({ ...prev, [bookId]: false }));
+        }
+      }
+    };
+    prefetchReferencedBooks();
+  }, [openRefMessageId, openRefId, chatMessages, references, id, referencedBooks, loadingBookIds, chunkContent]);
 
   // Page selection functions
   const handlePageSelect = () => {
@@ -1120,46 +1245,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
 
   MemoizedMarkdown.displayName = 'MemoizedMarkdown';
 
-  // When expanding references for a message, prefetch any referenced book contents not yet loaded
-  useEffect(() => {
-    const prefetchReferencedBooks = async () => {
-      if (!showReferences) return;
-      const msg = chatMessages.find(m => m.id === showReferences);
-      if (!msg || !msg.references) return;
-      const bookIds = new Set<string>();
-      for (const refId of msg.references) {
-        const ref = references[refId];
-        if (ref && ref.bookId && ref.bookId !== id) {
-          bookIds.add(ref.bookId);
-        }
-      }
-      for (const bookId of bookIds) {
-        if (referencedBooks[bookId] || loadingBookIds[bookId]) continue;
-        setLoadingBookIds(prev => ({ ...prev, [bookId]: true }));
-        try {
-          const resp = await fetch(`/api/books/${bookId}`);
-          if (!resp.ok) throw new Error('Failed to fetch referenced book');
-          const data = await resp.json();
-          if (!data.success || !data.data?.content) throw new Error('Invalid referenced book data');
-          const book = data.data;
-          const chunks = chunkContent(book.content || '');
-          // compute chunk starts
-          const starts: number[] = [];
-          let acc = 0;
-          for (const ch of chunks) {
-            starts.push(acc);
-            acc += ch.content.length;
-          }
-          setReferencedBooks(prev => ({ ...prev, [bookId]: { content: book.content || '', chunks, chunkStarts: starts, title: book.title } }));
-        } catch (e) {
-          console.error('Error prefetching referenced book', bookId, e);
-        } finally {
-          setLoadingBookIds(prev => ({ ...prev, [bookId]: false }));
-        }
-      }
-    };
-    prefetchReferencedBooks();
-  }, [showReferences, chatMessages, references, id, referencedBooks, loadingBookIds, chunkContent]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1403,102 +1488,118 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                     <p>Ask me anything about this book!</p>
                   </div>
                 ) : (
-                  chatMessages.map((message) => (
-                    <div key={message.id} className="space-y-2">
+                  chatMessages.map((message) => {
+                    // Group references by paragraph index: manual assignment for testing
+                    const refGroups: Record<number, string[]> = {};
+                    if (message.references && message.references.length) {
+                      const paragraphs = message.content.split(/\n{2,}/);
+                      
+                      // For test message, manually assign references to paragraphs
+                      if (message.id === 'test-message') {
+                        // First paragraph: ref-para-1a, ref-para-1b
+                        refGroups[0] = ['ref-para-1a', 'ref-para-1b'];
+                        // Second paragraph: ref-para-2a, ref-para-2b  
+                        refGroups[1] = ['ref-para-2a', 'ref-para-2b'];
+                        // Third paragraph: ref-para-3a, ref-para-3b, ref-para-3c
+                        refGroups[2] = ['ref-para-3a', 'ref-para-3b', 'ref-para-3c'];
+                      } else {
+                        // For other messages, use the original distribution logic
+                        message.references.forEach((refId) => {
+                          const ref = references[refId];
+                          let targetIdx = paragraphs.length - 1;
+                          if (ref && typeof ref.startOffset === 'number' && typeof ref.endOffset === 'number') {
+                            // Distribute by position in full content if available (fallback to last paragraph)
+                            const len = message.content.length;
+                            const pos = Math.min(Math.max(ref.startOffset, 0), len);
+                            let acc = 0;
+                            for (let i = 0; i < paragraphs.length; i++) {
+                              const next = acc + paragraphs[i].length + (i < paragraphs.length - 1 ? 2 : 0);
+                              if (pos <= next) { targetIdx = i; break; }
+                              acc = next;
+                            }
+                          }
+                          if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
+                          refGroups[targetIdx].push(refId);
+                        });
+                      }
+                    }
+
+                    const renderRefBlock = (refId: string) => {
+                      const ref = references[refId];
+                      if (!ref) return null;
+                      let refStart = typeof ref.startOffset === 'number' ? ref.startOffset : -1;
+                      let refEnd = typeof ref.endOffset === 'number' ? ref.endOffset : -1;
+                      const useCurrentBook = !ref.bookId || ref.bookId === id;
+                      const sourceContent = useCurrentBook ? bookContent : referencedBooks[ref.bookId!]?.content;
+                      const sourceChunks = useCurrentBook ? contentChunks : referencedBooks[ref.bookId!]?.chunks || [];
+                      const sourceStarts = useCurrentBook ? chunkStartOffsets : referencedBooks[ref.bookId!]?.chunkStarts || [];
+                      if (refStart < 0 && ref.content && sourceContent) {
+                        const idx = sourceContent.indexOf(ref.content);
+                        if (idx >= 0) {
+                          refStart = idx;
+                          refEnd = idx + ref.content.length;
+                        }
+                      }
+                      if (refStart < 0 || refEnd <= refStart) {
+                        return (
+                          <div className="text-xs text-amber-700">Unable to locate reference range in the book content.</div>
+                        );
+                      }
+                      const pagesToRender: number[] = [];
+                      for (let i = 0; i < sourceChunks.length; i++) {
+                        const cStart = sourceStarts[i] ?? 0;
+                        const cEnd = cStart + sourceChunks[i].content.length;
+                        if (refStart < cEnd && refEnd > cStart) {
+                          pagesToRender.push(i);
+                        }
+                        if (cStart > refEnd) break;
+                      }
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className={`rounded-lg p-3 ${
+                            message.type === 'user' 
+                              ? 'bg-gray-200 text-gray-800 border border-gray-300' 
+                              : 'bg-gray-200 text-gray-800 border border-gray-300'
+                          }`}
+                        >
+                          <div className="text-sm mb-2 text-gray-700">
+                            {ref.chapter && <strong>{ref.chapter}</strong>}
+                            {ref.page && <span className="ml-2 text-amber-600">(Page {ref.page})</span>}
+                            {!useCurrentBook && ref.bookId && <span className="ml-2 text-gray-500">[{referencedBooks[ref.bookId]?.title || ref.bookId}]</span>}
+                          </div>
+                          <div className="max-h-80 overflow-y-auto">
+                            {pagesToRender.map((pi) => {
+                              const chunk = sourceChunks[pi];
+                              const cStart = sourceStarts[pi] ?? 0;
+                              const html = highlightRangeInChunk(chunk.content, cStart, refStart, refEnd);
+                              return (
+                                <div key={chunk.id} className="p-3 border-b last:border-b-0 border-gray-300">
+                                  <div className="text-xs mb-2 text-gray-500">Page {chunk.page}{chunk.chapter ? ` • ${chunk.chapter}` : ''}</div>
+                                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-700" dangerouslySetInnerHTML={{ __html: html }} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      );
+                    };
+
+                    return (
                       <ChatMessageComponent
+                        key={message.id}
                         message={message}
-                        showReferences={showReferences}
-                        references={references}
-                        onToggleReferences={toggleReferences}
                         isFullscreen={isFullscreen}
-                        onNavigateToReference={navigateToReference}
+                        refGroups={refGroups}
+                        openRefMessageId={openRefMessageId}
+                        openRefId={openRefId}
+                        onToggleRef={toggleRef}
+                        renderRefBlock={renderRefBlock}
                       />
-
-                      {/* Inline scrollable pages with highlighted ranges */}
-                      <AnimatePresence>
-                        {showReferences === message.id && message.references && message.references.length > 0 && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            exit={{ opacity: 0, height: 0 }}
-                            className="bg-amber-50 border border-amber-200 rounded-lg p-3"
-                          >
-                            <h4 className="font-semibold text-amber-900 mb-2 text-sm">References</h4>
-                            <div className="space-y-4">
-                              {message.references.map((refId) => {
-                                const ref = references[refId];
-                                if (!ref) return null;
-
-                                // Determine offsets to highlight
-                                let refStart = typeof ref.startOffset === 'number' ? ref.startOffset : -1;
-                                let refEnd = typeof ref.endOffset === 'number' ? ref.endOffset : -1;
-                                // Select the correct book content/chunks depending on ref.bookId
-                                const useCurrentBook = !ref.bookId || ref.bookId === id;
-                                const sourceContent = useCurrentBook ? bookContent : referencedBooks[ref.bookId!]?.content;
-                                const sourceChunks = useCurrentBook ? contentChunks : referencedBooks[ref.bookId!]?.chunks || [];
-                                const sourceStarts = useCurrentBook ? chunkStartOffsets : referencedBooks[ref.bookId!]?.chunkStarts || [];
-
-                                if (refStart < 0 && ref.content && sourceContent) {
-                                  const idx = sourceContent.indexOf(ref.content);
-                                  if (idx >= 0) {
-                                    refStart = idx;
-                                    refEnd = idx + ref.content.length;
-                                  }
-                                }
-
-                                if (refStart < 0 || refEnd <= refStart) {
-                                  return (
-                                    <div key={refId} className="text-xs text-amber-800">
-                                      Unable to locate reference range in the book content.
-                                    </div>
-                                  );
-                                }
-
-                                // Find which chunks (pages) intersect the reference range
-                                const pagesToRender: number[] = [];
-                                for (let i = 0; i < sourceChunks.length; i++) {
-                                  const cStart = sourceStarts[i] ?? 0;
-                                  const cEnd = cStart + sourceChunks[i].content.length;
-                                  if (refStart < cEnd && refEnd > cStart) {
-                                    pagesToRender.push(i);
-                                  }
-                                  if (cStart > refEnd) break;
-                                }
-
-                                return (
-                                  <div key={refId} className="border border-amber-200 rounded-md bg-white">
-                                    <div className="px-3 py-2 border-b border-amber-200 text-sm text-amber-900 flex items-center justify-between">
-                                      <div>
-                                        {ref.chapter && <strong>{ref.chapter}</strong>}
-                                        {ref.page && <span className="ml-2 text-amber-700">(Page {ref.page})</span>}
-                                        {!useCurrentBook && ref.bookId && <span className="ml-2 text-gray-600">[{referencedBooks[ref.bookId]?.title || ref.bookId}]</span>}
-                                      </div>
-                                    </div>
-                                    <div className="max-h-80 overflow-y-auto">
-                                      {pagesToRender.map((pi) => {
-                                        const chunk = sourceChunks[pi];
-                                        const cStart = sourceStarts[pi] ?? 0;
-                                        const html = highlightRangeInChunk(chunk.content, cStart, refStart, refEnd);
-                                        return (
-                                          <div key={chunk.id} className="p-3 border-b last:border-b-0 border-gray-100">
-                                            <div className="text-xs text-gray-500 mb-2">Page {chunk.page}{chunk.chapter ? ` • ${chunk.chapter}` : ''}</div>
-                                            <div
-                                              className="text-sm leading-relaxed whitespace-pre-wrap"
-                                              dangerouslySetInnerHTML={{ __html: html }}
-                                            />
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
 
                 {/* Removed global references section; references now render inline per message */}
