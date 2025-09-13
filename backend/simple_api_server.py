@@ -72,7 +72,20 @@ async def ask_simple(request: dict):
             raise HTTPException(status_code=500, detail="OpenAI API key not configured")
         
         # Build system message with context if available
-        system_message = "You are a helpful AI assistant that answers questions about books and content. Provide detailed, accurate, and helpful responses."
+        system_message = """You are a helpful AI assistant that answers questions about books and content. 
+
+IMPORTANT: When answering questions about the provided book content, you MUST include reference markers to show exactly where your information comes from.
+
+Instructions:
+1. Provide detailed, accurate, and helpful responses
+2. ALWAYS include [REF:start_index:end_index] markers when quoting or referencing specific content from the book
+3. Use the format [REF:start:end] where start and end are character positions in the provided context
+4. You MUST include at least one reference marker in your response when answering questions about the book content
+
+Example: "According to the text [REF:150:200], the author states that neural networks are computational models inspired by biological neural networks."
+
+Remember: Always include reference markers [REF:start:end] in your response when referencing the book content.
+"""
         
         if context:
             system_message += f"\n\nYou have access to the following book content to help answer questions:\n\n{context[:4000]}"  # Limit context to avoid token limits
@@ -95,7 +108,7 @@ async def ask_simple(request: dict):
                         },
                         {
                             "role": "user",
-                            "content": question
+                            "content": f"{question}\n\nIMPORTANT: Please include [REF:start:end] markers in your response to show exactly where you found the information in the provided book content."
                         }
                     ],
                     "max_tokens": 1000,
@@ -110,9 +123,39 @@ async def ask_simple(request: dict):
             data = response.json()
             answer = data["choices"][0]["message"]["content"]
             
+            # Parse references from the answer
+            import re
+            references = []
+            ref_pattern = r'\[REF:(\d+):(\d+)\]'
+            matches = re.findall(ref_pattern, answer)
+            
+            for i, (start, end) in enumerate(matches):
+                start_idx = int(start)
+                end_idx = int(end)
+                
+                # Extract the referenced text from context
+                if context and start_idx < len(context) and end_idx <= len(context):
+                    ref_content = context[start_idx:end_idx]
+                    references.append({
+                        "id": f"ref_{i+1}",
+                        "content": ref_content,
+                        "startOffset": start_idx,
+                        "endOffset": end_idx,
+                        "page": 1,  # Default page, could be calculated based on content
+                        "chapter": "Book Content",  # Default chapter
+                        "bookId": book_id,
+                        "relevanceScore": 0.95
+                    })
+            
+            # Clean the answer by removing reference markers and replacing with numbered references
+            clean_answer = answer
+            for i, (start, end) in enumerate(matches):
+                clean_answer = clean_answer.replace(f'[REF:{start}:{end}]', f'[Reference {i+1}]')
+            
             return {
-                "answer": answer,
-                "question": question
+                "answer": clean_answer,
+                "question": question,
+                "references": references
             }
             
     except Exception as e:
