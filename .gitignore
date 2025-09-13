@@ -122,4 +122,5 @@ desktop.ini
 
 .quarentena
 
-.claude/logs
+.claude/logsnode_modules/
+frontend/node_modules/
