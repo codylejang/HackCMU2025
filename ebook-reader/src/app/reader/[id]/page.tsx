@@ -50,24 +50,25 @@ interface ContentChunk {
 
 const CHUNK_SIZE = 10000; // Characters per chunk (~10k words per page)
 const CHUNKS_PER_PAGE = 1; // One chunk per section for single screen fit
+const CHUNKS_TO_LOAD = 5; // Number of chunks to load ahead/behind current position
+const CHUNK_LOAD_THRESHOLD = 0.8; // Load more chunks when 80% through current set
+const MAX_LOADED_CHUNKS = 50; // Maximum number of chunks to keep in memory
 
 // Memoized chat message component
 const ChatMessageComponent = memo(({ 
-  message,
+  message, 
+  showReferences, 
+  references, 
+  onToggleReferences,
   isFullscreen,
-  refGroups,
-  openRefMessageId,
-  openRefId,
-  onToggleRef,
-  renderRefBlock
+  onNavigateToReference
 }: {
   message: ChatMessage;
+  showReferences: string | null;
+  references: Record<string, Reference>;
+  onToggleReferences: (messageId: string) => void;
   isFullscreen: boolean;
-  refGroups: Record<number, string[]>;
-  openRefMessageId: string | null;
-  openRefId: string | null;
-  onToggleRef: (messageId: string, refId: string) => void;
-  renderRefBlock: (refId: string) => React.ReactNode;
+  onNavigateToReference: (pageNumber: number) => void;
 }) => (
   <motion.div
     initial={{ opacity: 0, y: 20 }}
@@ -89,44 +90,29 @@ const ChatMessageComponent = memo(({
           <User className="h-4 w-4 mt-0.5 flex-shrink-0" />
         )}
         <div className="flex-1">
-          {(() => {
-            const paragraphs = message.content.split(/\n{2,}/);
-            return (
-              <div>
-                {paragraphs.map((para, idx) => (
-                  <div key={`${message.id}_p_${idx}`} className="mb-2 last:mb-0">
-                    <p className={isFullscreen ? 'text-base' : 'text-sm'}>{para}</p>
-                    {refGroups[idx] && refGroups[idx].length > 0 && (
-                      <div className="mt-1 flex items-center space-x-2 flex-wrap">
-                        {refGroups[idx].map((refId) => (
-                          <button
-                            key={refId}
-                            onClick={() => onToggleRef(message.id, refId)}
-                            className="text-[11px] inline-flex items-center space-x-1 text-amber-700 hover:text-amber-800"
-                            title="Toggle reference"
-                          >
-                            <span className="w-4 h-4 rounded-full border border-current flex items-center justify-center">
-                              {openRefMessageId === message.id && openRefId === refId ? (
-                                <ChevronDown className="h-3 w-3" />
-                              ) : (
-                                <ChevronRight className="h-3 w-3" />
-                              )}
-                            </span>
-                            <span>Reference ({refGroups[idx].length})</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {openRefMessageId === message.id && refGroups[idx]?.includes(openRefId || '') && (
-                      <div className="mt-2">
-                        {openRefId ? renderRefBlock(openRefId) : null}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
+          <p className={isFullscreen ? 'text-base' : 'text-sm'}>{message.content}</p>
+          {message.references && message.references.length > 0 && (
+            <div className="mt-2 flex items-center space-x-2 flex-wrap">
+              <button
+                onClick={() => {
+                  onToggleReferences(message.id);
+                }}
+                className="text-xs inline-flex items-center space-x-2"
+                title="Toggle references"
+              >
+                <span className="w-5 h-5 rounded-full border border-current flex items-center justify-center">
+                  {showReferences === message.id ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </span>
+                <span>
+                  References ({message.references.length})
+                </span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -146,8 +132,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [isLoading, setIsLoading] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [showThinkingIndicator, setShowThinkingIndicator] = useState(false);
-  const [openRefMessageId, setOpenRefMessageId] = useState<string | null>(null);
-  const [openRefId, setOpenRefId] = useState<string | null>(null);
+  const [showReferences, setShowReferences] = useState<string | null>(null);
   const [references, setReferences] = useState<Record<string, Reference>>({});
   const [bookContent, setBookContent] = useState<string>('');
   const [contentChunks, setContentChunks] = useState<ContentChunk[]>([]);
@@ -156,9 +141,14 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
   const [bookMetadata, setBookMetadata] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [showPageSelector, setShowPageSelector] = useState(false);
-  const [pageInput, setPageInput] = useState('');
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  
+  // Progressive loading state
+  const [loadedChunks, setLoadedChunks] = useState<ContentChunk[]>([]);
+  const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
+  const [isLoadingChunks, setIsLoadingChunks] = useState(false);
+  const [scrollPosition, setScrollPosition] = useState(0);
+  const [lastLoadTime, setLastLoadTime] = useState(0);
   
   const chatInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -308,19 +298,80 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     return undefined;
   }, []);
 
-  // Utility function to chunk content
+  // Utility function to find the best break point at punctuation
+  const findBestBreakPoint = useCallback((text: string, maxLength: number): number => {
+    // console.log(`findBestBreakPoint called: text.length=${text.length}, maxLength=${maxLength}`);
+    if (text.length <= maxLength) {
+      // console.log(`Text length <= maxLength, returning ${text.length}`);
+      return text.length;
+    }
+    
+    // Look for break points in order of preference
+    const breakPoints = [
+      // Paragraph breaks (highest priority)
+      { pattern: /\n\n/g, offset: 0 },
+      // Sentence endings with proper punctuation
+      { pattern: /[.!?]+\s+/g, offset: 1 },
+      // Semicolons and colons
+      { pattern: /[;:]\s+/g, offset: 1 },
+      // Commas (lower priority)
+      { pattern: /,\s+/g, offset: 1 },
+      // Line breaks
+      { pattern: /\n/g, offset: 0 },
+      // Spaces (last resort)
+      { pattern: /\s+/g, offset: 1 }
+    ];
+    
+    // Start from the maximum length and work backwards
+    let searchText = text.substring(0, Math.min(maxLength, text.length));
+    
+    for (const breakPoint of breakPoints) {
+      const matches = Array.from(searchText.matchAll(breakPoint.pattern));
+      
+      if (matches.length > 0) {
+        // Find the last match that's within our target range
+        for (let i = matches.length - 1; i >= 0; i--) {
+          const match = matches[i];
+          const breakPosition = match.index! + match[0].length - breakPoint.offset;
+          
+          // Ensure we're not too close to the beginning (at least 20% of max length)
+          if (breakPosition > maxLength * 0.2) {
+            return breakPosition;
+          }
+        }
+      }
+    }
+    
+    // If no good break point found, break at the maximum length
+    // console.log(`No good break point found, returning maxLength: ${maxLength}`);
+    return maxLength;
+  }, []);
+
+  // Utility function to chunk content with smart punctuation-based breaking
   const chunkContent = useCallback((content: string): ContentChunk[] => {
+    // console.log('chunkContent called with content length:', content.length);
+    // console.log('Content preview:', content.substring(0, 100));
+    
     const chunks: ContentChunk[] = [];
-    const lines = content.split('\n');
     let currentChunk = '';
     let chunkIndex = 0;
     let pageNumber = 1;
     let currentChapter = '';
     let isInTOC = false;
-
+    
+    // Split content into lines for processing
+    const lines = content.split('\n');
+    // console.log('Lines count:', lines.length);
+    // console.log('First few lines:', lines.slice(0, 3));
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const potentialChunk = currentChunk + (currentChunk ? '\n' : '') + line;
+      
+      // if (i < 5) { // Debug first few iterations
+      //   console.log(`Line ${i}:`, line);
+      //   console.log(`Potential chunk length:`, potentialChunk.length);
+      // }
 
       // Check if we're in table of contents section (only for first few pages)
       if (pageNumber <= 5 && (
@@ -330,7 +381,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
           (line.toLowerCase().includes('part') && line.length < 100) ||
           (line.toLowerCase().includes('book') && line.length < 100) ||
           (line.startsWith('#') && (line.toLowerCase().includes('chapter') || line.toLowerCase().includes('part'))) ||
-          (line.match(/^\d+\./) && line.length < 100))) { // Numbered list items that are likely TOC entries
+          (line.match(/^\d+\./) && line.length < 100))) {
         isInTOC = true;
       }
       
@@ -341,7 +392,6 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
 
       // Check if this line is a chapter heading (not in TOC)
       if (!isInTOC) {
-        // Only look for H1, H2, H3 headings
         if (line.startsWith('# ') || line.startsWith('## ') || line.startsWith('### ')) {
           const chapterTitle = extractChapterTitle(line);
           if (chapterTitle) {
@@ -357,67 +407,54 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
       } else {
         currentChunkSize = CHUNK_SIZE; // Full chunk size for all non-TOC pages
       }
+      
+      // if (i < 5) { // Debug first few iterations
+      //   console.log(`Chunk size:`, currentChunkSize, `isInTOC:`, isInTOC, `pageNumber:`, pageNumber);
+      // }
 
       // Check if adding this line would exceed chunk size
       if (potentialChunk.length > currentChunkSize && currentChunk) {
-        // For TOC, try to break at line boundaries to preserve complete entries
-        if (isInTOC) {
-          const lastNewline = currentChunk.lastIndexOf('\n');
-          if (lastNewline > currentChunkSize * 0.8) { // If we have a good line break
-            const chunkContent = currentChunk.substring(0, lastNewline).trim();
-            const chapterTitle = extractChapterTitle(chunkContent);
-            chunks.push({
-              id: `chunk_${chunkIndex}`,
-              content: chunkContent,
-              page: pageNumber,
-              chapter: chapterTitle || currentChapter
-            });
-            currentChunk = currentChunk.substring(lastNewline + 1) + (line ? '\n' + line : '');
-          } else {
-            // Save current chunk as is
-            const chapterTitle = extractChapterTitle(currentChunk);
-            chunks.push({
-              id: `chunk_${chunkIndex}`,
-              content: currentChunk,
-              page: pageNumber,
-              chapter: chapterTitle || currentChapter
-            });
-            currentChunk = line;
-          }
+        // console.log(`Creating chunk at line ${i}, potentialChunk.length: ${potentialChunk.length}, currentChunkSize: ${currentChunkSize}`);
+        
+        // Find the best break point using punctuation
+        const breakPoint = findBestBreakPoint(currentChunk, currentChunkSize);
+        // console.log(`Break point found: ${breakPoint}`);
+        
+        if (breakPoint > 0) {
+          const chunkContent = currentChunk.substring(0, breakPoint).trim();
+          const chapterTitle = extractChapterTitle(chunkContent);
+          chunks.push({
+            id: `chunk_${chunkIndex}`,
+            content: chunkContent,
+            page: pageNumber,
+            chapter: chapterTitle || currentChapter
+          });
+          // console.log(`Created chunk ${chunkIndex} with content length: ${chunkContent.length}`);
+          
+          // Keep the remaining content and add the current line
+          currentChunk = currentChunk.substring(breakPoint).trim() + (line ? '\n' + line : '');
         } else {
-          // Try to break at a paragraph boundary if possible
-          const lastParagraphBreak = currentChunk.lastIndexOf('\n\n');
-          if (lastParagraphBreak > currentChunkSize * 0.7) { // If we have a good paragraph break
-            const chunkContent = currentChunk.substring(0, lastParagraphBreak).trim();
-            const chapterTitle = extractChapterTitle(chunkContent);
-            chunks.push({
-              id: `chunk_${chunkIndex}`,
-              content: chunkContent,
-              page: pageNumber,
-              chapter: chapterTitle || currentChapter
-            });
-            currentChunk = currentChunk.substring(lastParagraphBreak + 2) + (line ? '\n' + line : '');
-          } else {
-            // Save current chunk as is
-            const chapterTitle = extractChapterTitle(currentChunk);
-            chunks.push({
-              id: `chunk_${chunkIndex}`,
-              content: currentChunk,
-              page: pageNumber,
-              chapter: chapterTitle || currentChapter
-            });
-            currentChunk = line;
-          }
+          // Fallback: save current chunk as is
+          const chapterTitle = extractChapterTitle(currentChunk);
+          chunks.push({
+            id: `chunk_${chunkIndex}`,
+            content: currentChunk,
+            page: pageNumber,
+            chapter: chapterTitle || currentChapter
+          });
+          // console.log(`Created fallback chunk ${chunkIndex} with content length: ${currentChunk.length}`);
+          currentChunk = line;
         }
         
         chunkIndex++;
-        pageNumber++; // Each chunk is now one section
+        pageNumber++;
       } else {
         currentChunk = potentialChunk;
       }
     }
 
     // Add the last chunk if it exists
+    // console.log(`Final currentChunk length: ${currentChunk.length}, trimmed: ${currentChunk.trim().length}`);
     if (currentChunk.trim()) {
       const chapterTitle = extractChapterTitle(currentChunk);
       chunks.push({
@@ -426,154 +463,301 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         page: pageNumber,
         chapter: chapterTitle || (currentChapter && currentChapter !== 'Steve Jobs' ? currentChapter : undefined)
       });
+      // console.log(`Created final chunk ${chunkIndex} with content length: ${currentChunk.length}`);
     }
+    
+    // console.log(`Total chunks created: ${chunks.length}`);
 
+    // console.log('chunkContent result:', {
+    //   chunksLength: chunks.length,
+    //   chunks: chunks.slice(0, 2) // Show first 2 chunks for debugging
+    // });
+    
+    // Emergency fallback: if no chunks were created, create one with the entire content
+    if (chunks.length === 0 && content.trim().length > 0) {
+      // console.log('No chunks created, creating emergency chunk with full content');
+      chunks.push({
+        id: 'emergency-chunk-full',
+        content: content,
+        page: 1,
+        chapter: 'Full Content'
+      });
+    }
+    
     return chunks;
-  }, [extractChapterTitle]);
+  }, [extractChapterTitle, findBestBreakPoint]);
+
+  // Progressive loading logic
+  const loadChunksAroundIndex = useCallback((centerIndex: number, allChunks: ContentChunk[]) => {
+    const startIndex = Math.max(0, centerIndex - CHUNKS_TO_LOAD);
+    const endIndex = Math.min(allChunks.length - 1, centerIndex + CHUNKS_TO_LOAD);
+    
+    return allChunks.slice(startIndex, endIndex + 1);
+  }, []);
+
+  const expandChunksUp = useCallback(() => {
+    if (contentChunks.length === 0) return;
+    
+    setIsLoadingChunks(true);
+    
+    // Get the current first loaded chunk index
+    const currentFirstChunk = loadedChunks[0];
+    if (!currentFirstChunk) return;
+    
+    const currentFirstIndex = contentChunks.findIndex(chunk => chunk.id === currentFirstChunk.id);
+    if (currentFirstIndex <= 0) {
+      setIsLoadingChunks(false);
+      return; // Already at the beginning
+    }
+    
+    // Load more chunks before the current first chunk
+    const newStartIndex = Math.max(0, currentFirstIndex - CHUNKS_TO_LOAD);
+    const newChunks = contentChunks.slice(newStartIndex, currentFirstIndex);
+    
+    // Prepend new chunks to the beginning, avoiding duplicates
+    setLoadedChunks(prev => {
+      // Filter out chunks that are already loaded
+      const existingIds = new Set(prev.map(chunk => chunk.id));
+      const uniqueNewChunks = newChunks.filter(chunk => !existingIds.has(chunk.id));
+      
+      // If no new unique chunks, don't update
+      if (uniqueNewChunks.length === 0) {
+        setIsLoadingChunks(false);
+        return prev;
+      }
+      
+      const updated = [...uniqueNewChunks, ...prev];
+      // Trim from the end if we exceed max chunks
+      if (updated.length > MAX_LOADED_CHUNKS) {
+        return updated.slice(0, MAX_LOADED_CHUNKS);
+      }
+      return updated;
+    });
+    
+    // console.log('Expanded chunks up:', { 
+    //   requestedChunks: newChunks.length,
+    //   uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+    //   newStartIndex, 
+    //   currentFirstIndex 
+    // });
+    
+    setTimeout(() => setIsLoadingChunks(false), 100);
+  }, [contentChunks, loadedChunks]);
+
+  const expandChunksDown = useCallback(() => {
+    if (contentChunks.length === 0) return;
+    
+    setIsLoadingChunks(true);
+    
+    // Get the current last loaded chunk index
+    const currentLastChunk = loadedChunks[loadedChunks.length - 1];
+    if (!currentLastChunk) return;
+    
+    const currentLastIndex = contentChunks.findIndex(chunk => chunk.id === currentLastChunk.id);
+    if (currentLastIndex >= contentChunks.length - 1) {
+      setIsLoadingChunks(false);
+      return; // Already at the end
+    }
+    
+    // Load more chunks after the current last chunk
+    const newEndIndex = Math.min(contentChunks.length, currentLastIndex + 1 + CHUNKS_TO_LOAD);
+    const newChunks = contentChunks.slice(currentLastIndex + 1, newEndIndex);
+    
+    // Append new chunks to the end, avoiding duplicates
+    setLoadedChunks(prev => {
+      // Filter out chunks that are already loaded
+      const existingIds = new Set(prev.map(chunk => chunk.id));
+      const uniqueNewChunks = newChunks.filter(chunk => !existingIds.has(chunk.id));
+      
+      // If no new unique chunks, don't update
+      if (uniqueNewChunks.length === 0) {
+        setIsLoadingChunks(false);
+        return prev;
+      }
+      
+      const updated = [...prev, ...uniqueNewChunks];
+      // Trim from the beginning if we exceed max chunks
+      if (updated.length > MAX_LOADED_CHUNKS) {
+        return updated.slice(-MAX_LOADED_CHUNKS);
+      }
+      return updated;
+    });
+    
+    // console.log('Expanded chunks down:', { 
+    //   requestedChunks: newChunks.length,
+    //   uniqueChunksAdded: newChunks.filter(chunk => !loadedChunks.some(loaded => loaded.id === chunk.id)).length,
+    //   currentLastIndex, 
+    //   newEndIndex 
+    // });
+    
+    setTimeout(() => setIsLoadingChunks(false), 100);
+  }, [contentChunks, loadedChunks]);
+
+  // Scroll detection for dynamic expansion
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const container = e.currentTarget;
+    const scrollTop = container.scrollTop;
+    const scrollHeight = container.scrollHeight;
+    const clientHeight = container.clientHeight;
+    
+    setScrollPosition(scrollTop);
+    
+    // Handle edge cases where scrollHeight equals clientHeight
+    if (scrollHeight <= clientHeight) return;
+    
+    // Calculate scroll position as percentage
+    const scrollPercentage = scrollTop / (scrollHeight - clientHeight);
+    
+    // Define expansion thresholds
+    const expandUpThreshold = 0.1; // Expand up when in top 10%
+    const expandDownThreshold = 0.9; // Expand down when in bottom 10%
+    
+    const now = Date.now();
+    const timeSinceLastLoad = now - lastLoadTime;
+    const minLoadInterval = 500; // Minimum 500ms between loads (faster for better UX)
+    
+    // Check if we should expand up (user scrolled near the top)
+    if (scrollPercentage < expandUpThreshold && timeSinceLastLoad > minLoadInterval) {
+      // console.log('Expanding chunks up - user near top:', { scrollPercentage });
+      setLastLoadTime(now);
+      expandChunksUp();
+    }
+    // Check if we should expand down (user scrolled near the bottom)
+    else if (scrollPercentage > expandDownThreshold && timeSinceLastLoad > minLoadInterval) {
+      // console.log('Expanding chunks down - user near bottom:', { scrollPercentage });
+      setLastLoadTime(now);
+      expandChunksDown();
+    }
+  }, [expandChunksUp, expandChunksDown, lastLoadTime]);
 
   // Load book content from API
   useEffect(() => {
     const loadBook = async () => {
+      // console.log('Starting to load book, setting isProcessing to true');
       setIsProcessing(true);
       try {
-        // Add a test message with multiple references per paragraph and different books
-        const testRefs: Reference[] = [
-          // First paragraph - 2 references from current book
-          {
-            id: 'ref-para-1a',
-            content: 'answering',
-            chapter: 'Current Book Chapter 1',
-            page: 1,
-            startOffset: 10,
-            endOffset: 20,
-            bookId: id
-          },
-          {
-            id: 'ref-para-1b',
-            content: 'something',
-            chapter: 'Current Book Chapter 2',
-            page: 3,
-            startOffset: 50,
-            endOffset: 60,
-            bookId: id
-          },
-          // Second paragraph - 2 references from different book
-          {
-            id: 'ref-para-2a',
-            content: 'elaborates',
-            chapter: 'Other Book Chapter 1',
-            page: 1,
-            startOffset: 30,
-            endOffset: 40,
-            bookId: 'other-book-123'
-          },
-          {
-            id: 'ref-para-2b',
-            content: 'further',
-            chapter: 'Other Book Chapter 2',
-            page: 5,
-            startOffset: 80,
-            endOffset: 90,
-            bookId: 'other-book-123'
-          },
-          // Third paragraph - 3 references from different books
-          {
-            id: 'ref-para-3a',
-            content: 'concludes',
-            chapter: 'Current Book Chapter 3',
-            page: 2,
-            startOffset: 110,
-            endOffset: 120,
-            bookId: id
-          },
-          {
-            id: 'ref-para-3b',
-            content: 'thought',
-            chapter: 'Third Book Chapter 1',
-            page: 1,
-            startOffset: 25,
-            endOffset: 35,
-            bookId: 'third-book-456'
-          },
-          {
-            id: 'ref-para-3c',
-            content: 'analysis',
-            chapter: 'Other Book Chapter 3',
-            page: 7,
-            startOffset: 150,
-            endOffset: 160,
-            bookId: 'other-book-123'
-          }
-        ];
-
+        // Add a test message with references for debugging
+        const testRef: Reference = {
+          id: 'test-ref-6-37',
+          content: 'Test reference content from character range 6-37',
+          chapter: 'Test Chapter',
+          page: 1,
+          startOffset: 6,
+          endOffset: 37,
+          bookId: 'book_1757773062667_nr0jeva'
+        };
+        
         const testMessage: ChatMessage = {
           id: 'test-message',
           type: 'assistant',
-          content: 'Para one answering something with multiple references.\n\nPara two that elaborates further with cross-book citations.\n\nPara three concludes the thought with comprehensive analysis.',
+          content: 'This is a test message with references to demonstrate the functionality using character offsets 6-37 from book_1757773062667_nr0jeva.',
           timestamp: new Date(),
-          references: testRefs.map(r => r.id)
+          references: ['test-ref-6-37']
         };
-
-        const refsMap: Record<string, Reference> = {};
-        testRefs.forEach(r => { refsMap[r.id] = r; });
-
-        console.log('Setting up test data...');
-        setReferences(refsMap);
+        
+        // console.log('Setting up test data...');
+        setReferences({ [testRef.id]: testRef });
         setChatMessages([testMessage]);
         
-        console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
-        console.log('Test message:', testMessage);
-        console.log('Test references:', testRefs);
+        // console.log('Test setup complete for book ID:', id, 'Expected: book_1757773062667_nr0jeva');
+        // console.log('Test message:', testMessage);
+        // console.log('Test reference:', testRef);
         
         // Optimize: Only fetch the specific book instead of all books
         const response = await fetch(`/api/books/${id}`);
         if (response.ok) {
           const data = await response.json();
+          // console.log('Single book API response:', data);
           if (data.success) {
-            const book = data.data;
-            setBookMetadata(book);
-            setBookContent(book.content || 'No content available');
-            
-            // Chunk the content asynchronously for better performance
-            setTimeout(() => {
-              const chunks = chunkContent(book.content || '');
-              setContentChunks(chunks);
-              setTotalPages(chunks.length);
-            }, 0);
-
-            // Open directly at the saved current page
-            if (book.currentPage && book.currentPage >= 1) {
-              setCurrentPage(book.currentPage);
-            } else {
-              setCurrentPage(1); // Fallback to page 1 if no valid saved page
-            }
-            
-            
-            // Mark initial load as complete
-            setIsInitialLoad(false);
-          }
-        } else {
-          // Fallback: fetch all books if specific book endpoint doesn't exist
-        const response = await fetch('/api/books');
-        const data = await response.json();
-        if (data.success) {
-          const book = data.data.find((b: any) => b.id === id);
-          if (book) {
-            setBookMetadata(book);
-            setBookContent(book.content || 'No content available');
+            const book = data.data; // Single book endpoint returns the book directly
+            // console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
+            if (book) {
+              setBookMetadata(book);
+              setBookContent(book.content || 'No content available');
               
               // Chunk the content for better performance
               const chunks = chunkContent(book.content || '');
               setContentChunks(chunks);
               setTotalPages(chunks.length);
 
-              // Open directly at the saved current page
-              if (book.currentPage && book.currentPage >= 1 && book.currentPage <= chunks.length) {
-                setCurrentPage(book.currentPage);
-              } else {
-                setCurrentPage(1); // Fallback to page 1 if no valid saved page
-              }
+              // Initialize progressive loading immediately with the chunks
+              const initialChunkIndex = book.currentPage && book.currentPage >= 1 && book.currentPage <= chunks.length 
+                ? book.currentPage - 1 
+                : 0;
               
+              // Load initial chunks around the starting position using the chunks directly
+              const startIndex = Math.max(0, initialChunkIndex - CHUNKS_TO_LOAD);
+              const endIndex = Math.min(chunks.length - 1, initialChunkIndex + CHUNKS_TO_LOAD);
+              const initialLoadedChunks = chunks.slice(startIndex, endIndex + 1);
+              
+              // Ensure we always have at least some chunks loaded
+              const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
+              
+              // console.log('Setting loaded chunks:', finalLoadedChunks);
+              setLoadedChunks(finalLoadedChunks);
+              setCurrentChunkIndex(initialChunkIndex);
+              
+              // Set current page for compatibility
+              setCurrentPage(initialChunkIndex + 1);
+              
+              // Mark initial load as complete
+              setIsInitialLoad(false);
+            }
+          }
+        } else {
+          // Fallback: fetch all books if specific book endpoint doesn't exist
+        const response = await fetch('/api/books');
+        const data = await response.json();
+        
+        // console.log('API response:', { success: data.success, dataLength: data.data?.length });
+        
+        if (data.success) {
+          const book = data.data.find((b: any) => b.id === id);
+          // console.log('Book found:', { book: !!book, bookId: id, bookContent: book?.content?.substring(0, 100) });
+          if (book) {
+            setBookMetadata(book);
+            const bookContent = book.content || 'No content available';
+            setBookContent(bookContent);
+            
+            // console.log('Book content length:', bookContent.length);
+            // console.log('Book content preview:', bookContent.substring(0, 200));
+              
+              // Test chunking with a simple string first
+              // const testChunks = chunkContent('This is a test. This should create at least one chunk.');
+              // console.log('Test chunking result:', testChunks);
+              
+              // Chunk the content for better performance
+              const chunks = chunkContent(bookContent);
+              setContentChunks(chunks);
+              setTotalPages(chunks.length);
+
+              // Initialize progressive loading immediately with the chunks
+              const initialChunkIndex = book.currentPage && book.currentPage >= 1 && book.currentPage <= chunks.length 
+                ? book.currentPage - 1 
+                : 0;
+              
+              // Load initial chunks around the starting position using the chunks directly
+              const startIndex = Math.max(0, initialChunkIndex - CHUNKS_TO_LOAD);
+              const endIndex = Math.min(chunks.length - 1, initialChunkIndex + CHUNKS_TO_LOAD);
+              const initialLoadedChunks = chunks.slice(startIndex, endIndex + 1);
+              
+              // Ensure we always have at least some chunks loaded
+              const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
+              
+              // console.log('Initializing progressive loading:', {
+              //   totalChunks: chunks.length,
+              //   initialChunkIndex,
+              //   loadedChunksCount: finalLoadedChunks.length,
+              //   startIndex,
+              //   endIndex
+              // });
+              
+              // console.log('Setting loaded chunks:', finalLoadedChunks);
+              setLoadedChunks(finalLoadedChunks);
+              setCurrentChunkIndex(initialChunkIndex);
+              
+              // Set current page for compatibility
+              setCurrentPage(initialChunkIndex + 1);
               
               // Mark initial load as complete
               setIsInitialLoad(false);
@@ -582,6 +766,7 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
         }
       } catch (error) {
         console.error('Error loading book:', error);
+        // console.log('Falling back to mock content');
         // Fallback to mock content
         const mockContent = `
 # Chapter 1: The Beginning
@@ -641,14 +826,29 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
         setBookContent(mockContent);
         const chunks = chunkContent(mockContent);
         setContentChunks(chunks);
-        setTotalPages(Math.ceil(chunks.length / CHUNKS_PER_PAGE));
+        setTotalPages(chunks.length);
+        
+        // Initialize progressive loading for mock content using chunks directly
+        const startIndex = Math.max(0, 0 - CHUNKS_TO_LOAD);
+        const endIndex = Math.min(chunks.length - 1, 0 + CHUNKS_TO_LOAD);
+        const initialLoadedChunks = chunks.slice(startIndex, endIndex + 1);
+        
+        // Ensure we always have at least some chunks loaded
+        const finalLoadedChunks = initialLoadedChunks.length > 0 ? initialLoadedChunks : chunks.slice(0, Math.min(CHUNKS_TO_LOAD * 2 + 1, chunks.length));
+        
+        // console.log('Setting loaded chunks (mock):', finalLoadedChunks);
+        setLoadedChunks(finalLoadedChunks);
+        setCurrentChunkIndex(0);
       } finally {
+        // console.log('Setting isProcessing to false');
         setIsProcessing(false);
       }
+      
+      // Safety check removed - progressive loading should work now
     };
 
     loadBook();
-  }, [id, chunkContent]);
+  }, [id, chunkContent, loadChunksAroundIndex]);
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || isLoading) return;
@@ -684,7 +884,9 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
         body: JSON.stringify({
           question: currentMessage,
           bookId: id,
-          context: bookContent
+          context: loadedChunks.map(chunk => chunk.content).join('\n\n'),
+          loadedChunkCount: loadedChunks.length,
+          totalChunkCount: contentChunks.length
         }),
       });
 
@@ -769,14 +971,9 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     }
   };
 
-  const toggleRef = (messageId: string, refId: string) => {
-    if (openRefMessageId === messageId && openRefId === refId) {
-      setOpenRefMessageId(null);
-      setOpenRefId(null);
-    } else {
-      setOpenRefMessageId(messageId);
-      setOpenRefId(refId);
-    }
+  const toggleReferences = (messageId: string) => {
+    const willOpen = showReferences !== messageId;
+    setShowReferences(willOpen ? messageId : null);
   };
 
   const navigateToReference = (pageNumber: number) => {
@@ -846,16 +1043,16 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     }
   };
 
-  // Get current page chunks (each chunk is now one page)
-  const currentPageChunks = useMemo(() => {
-    const chunkIndex = currentPage - 1; // Convert page number to 0-based index
-    
-    if (chunkIndex >= 0 && chunkIndex < contentChunks.length) {
-      const chunk = contentChunks[chunkIndex];
-      return [chunk]; // Return single chunk as array
-    }
-    return [];
-  }, [contentChunks, currentPage]);
+  // Get loaded chunks for progressive loading
+  const allChunks = useMemo(() => {
+    // console.log('allChunks useMemo:', {
+    //   loadedChunksLength: loadedChunks.length,
+    //   contentChunksLength: contentChunks.length,
+    //   loadedChunks: loadedChunks,
+    //   contentChunks: contentChunks
+    // });
+    return loadedChunks; // Return only loaded chunks for progressive loading
+  }, [loadedChunks, contentChunks]);
 
 
   // Reset scroll position to top when page changes
@@ -926,8 +1123,8 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
   // When expanding references for a message, prefetch any referenced book contents not yet loaded
   useEffect(() => {
     const prefetchReferencedBooks = async () => {
-      if (!openRefMessageId || !openRefId) return;
-      const msg = chatMessages.find(m => m.id === openRefMessageId);
+      if (!showReferences) return;
+      const msg = chatMessages.find(m => m.id === showReferences);
       if (!msg || !msg.references) return;
       const bookIds = new Set<string>();
       for (const refId of msg.references) {
@@ -962,7 +1159,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
       }
     };
     prefetchReferencedBooks();
-  }, [openRefMessageId, openRefId, chatMessages, references, id, referencedBooks, loadingBookIds, chunkContent]);
+  }, [showReferences, chatMessages, references, id, referencedBooks, loadingBookIds, chunkContent]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -973,14 +1170,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
       }
 
       switch (e.key) {
-        case 'ArrowLeft':
-          e.preventDefault();
-          goToPreviousPage();
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          goToNextPage();
-          break;
         case 'm':
           if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
@@ -988,10 +1177,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
           }
           break;
         case 'Escape':
-          if (showPageSelector) {
-            setShowPageSelector(false);
-            setPageInput('');
-          } else if (isChatOpen) {
+          if (isChatOpen) {
             if (isFullscreen) {
               setIsFullscreen(false);
             } else {
@@ -1001,10 +1187,16 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
             setIsChatMinimized(false);
           }
           break;
-        case 'g':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault();
-            setShowPageSelector(true);
+        case 'Home':
+          e.preventDefault();
+          if (contentContainerRef.current) {
+            contentContainerRef.current.scrollTop = 0;
+          }
+          break;
+        case 'End':
+          e.preventDefault();
+          if (contentContainerRef.current) {
+            contentContainerRef.current.scrollTop = contentContainerRef.current.scrollHeight;
           }
           break;
       }
@@ -1012,7 +1204,7 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [goToPreviousPage, goToNextPage, isChatOpen, showPageSelector]);
+  }, [isChatOpen, handleChatClick]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1107,21 +1299,26 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                 <div 
                   ref={contentContainerRef}
                   className="text-gray-800 leading-relaxed flex-1 overflow-y-auto"
+                  onScroll={handleScroll}
                 >
-                  {currentPageChunks.map((chunk, index) => (
-                    <div key={chunk.id} className="mb-8">
+                  {allChunks.map((chunk, index) => {
+                    // Create a unique key that includes the chunk's position in the loaded array
+                    const uniqueKey = `${chunk.id}-loaded-${index}`;
+                    return (
+                    <div key={uniqueKey} className="mb-12">
                       {chunk.chapter && index === 0 && chunk.chapter.length > 10 && (
-                        <div className="mb-6 p-4 bg-amber-50 border-l-4 border-amber-300 rounded-r-lg">
-                          <h2 className="text-xl font-semibold text-amber-800">{chunk.chapter}</h2>
+                        <div className="mb-8 p-6 bg-amber-50 border-l-4 border-amber-300 rounded-r-lg">
+                          <h2 className="text-2xl font-semibold text-amber-800">{chunk.chapter}</h2>
                         </div>
                       )}
                       <div className="prose prose-lg max-w-none">
                         <MemoizedMarkdown content={chunk.content} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                   
-                  {currentPageChunks.length === 0 && (
+                  {allChunks.length === 0 && (
                     <div className="text-center text-gray-500 flex items-center justify-center h-full">
                       <div>
                         <BookOpen className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -1129,122 +1326,26 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                       </div>
                     </div>
                   )}
-              </div>
+                  
+                  {/* Loading indicator for progressive loading - Hidden for clean UI */}
+                  {/* {isLoadingChunks && (
+                    <div className="fixed top-4 right-4 bg-amber-100 border border-amber-300 rounded-lg px-4 py-2 shadow-lg z-50">
+                      <div className="flex items-center space-x-2">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600"></div>
+                        <span className="text-sm text-amber-800">Expanding content...</span>
+                      </div>
+                    </div>
+                  )} */}
+                </div>
               </div>
             )}
 
-            {/* Navigation */}
-            <div className="flex justify-between items-center mt-8">
-              <div className="flex items-center space-x-2">
-              <button
-                  onClick={goToPreviousPage}
-                  disabled={currentPage === 1}
-                  className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Previous page (←)"
-              >
-                <ChevronUp className="h-4 w-4" />
-                  <span>Previous</span>
-                </button>
+            {/* Reading Progress Indicator - Hidden for clean UI */}
+            {/* <div className="flex justify-center items-center mt-8">
+              <div className="text-sm text-gray-500">
+                Dynamic loading - {loadedChunks.length} chunks loaded (max {MAX_LOADED_CHUNKS})
               </div>
-              
-              <div className="flex items-center space-x-1">
-                {/* Calculate sliding window of page numbers */}
-                {(() => {
-                  const maxVisible = 5;
-                  let startPage = Math.max(1, currentPage - Math.floor(maxVisible / 2));
-                  let endPage = Math.min(totalPages, startPage + maxVisible - 1);
-                  
-                  // Adjust start if we're near the end
-                  if (endPage - startPage < maxVisible - 1) {
-                    startPage = Math.max(1, endPage - maxVisible + 1);
-                  }
-                  
-                  const pages = [];
-                  
-                  // Add first page and ellipsis if needed
-                  if (startPage > 1) {
-                    pages.push(
-                      <button
-                        key={1}
-                        onClick={() => setCurrentPage(1)}
-                        className="w-8 h-8 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                      >
-                        1
-                      </button>
-                    );
-                    if (startPage > 2) {
-                      pages.push(
-                        <button
-                          key="ellipsis-start"
-                          onClick={() => setShowPageSelector(true)}
-                          className="w-8 h-8 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                          title="Select section (Ctrl+G)"
-                        >
-                          ...
-                        </button>
-                      );
-                    }
-                  }
-                  
-                  // Add visible page range
-                  for (let i = startPage; i <= endPage; i++) {
-                    const isActive = i === currentPage;
-                    pages.push(
-                      <button
-                        key={i}
-                        onClick={() => setCurrentPage(i)}
-                        className={`w-8 h-8 rounded text-sm font-medium transition-colors ${
-                          isActive 
-                            ? 'bg-amber-600 text-white' 
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}
-                      >
-                        {i}
-                      </button>
-                    );
-                  }
-                  
-                  // Add ellipsis and last page if needed
-                  if (endPage < totalPages) {
-                    if (endPage < totalPages - 1) {
-                      pages.push(
-                        <button
-                          key="ellipsis-end"
-                          onClick={() => setShowPageSelector(true)}
-                          className="w-8 h-8 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                          title="Select section (Ctrl+G)"
-                        >
-                          ...
-                        </button>
-                      );
-                    }
-                    pages.push(
-                      <button
-                        key={totalPages}
-                        onClick={() => setCurrentPage(totalPages)}
-                        className="w-8 h-8 rounded text-sm font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
-                      >
-                        {totalPages}
-              </button>
-                    );
-                  }
-                  
-                  return pages;
-                })()}
-              </div>
-              
-              <div className="flex items-center space-x-2">
-              <button
-                  onClick={goToNextPage}
-                  disabled={currentPage === totalPages}
-                  className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Next page (→)"
-                >
-                  <span>Next</span>
-                <ChevronDown className="h-4 w-4" />
-              </button>
-              </div>
-            </div>
+            </div> */}
           </div>
         </main>
 
@@ -1302,118 +1403,102 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                     <p>Ask me anything about this book!</p>
                   </div>
                 ) : (
-                  chatMessages.map((message) => {
-                    // Group references by paragraph index: manual assignment for testing
-                    const refGroups: Record<number, string[]> = {};
-                    if (message.references && message.references.length) {
-                      const paragraphs = message.content.split(/\n{2,}/);
-                      
-                      // For test message, manually assign references to paragraphs
-                      if (message.id === 'test-message') {
-                        // First paragraph: ref-para-1a, ref-para-1b
-                        refGroups[0] = ['ref-para-1a', 'ref-para-1b'];
-                        // Second paragraph: ref-para-2a, ref-para-2b  
-                        refGroups[1] = ['ref-para-2a', 'ref-para-2b'];
-                        // Third paragraph: ref-para-3a, ref-para-3b, ref-para-3c
-                        refGroups[2] = ['ref-para-3a', 'ref-para-3b', 'ref-para-3c'];
-                      } else {
-                        // For other messages, use the original distribution logic
-                        message.references.forEach((refId) => {
-                          const ref = references[refId];
-                          let targetIdx = paragraphs.length - 1;
-                          if (ref && typeof ref.startOffset === 'number' && typeof ref.endOffset === 'number') {
-                            // Distribute by position in full content if available (fallback to last paragraph)
-                            const len = message.content.length;
-                            const pos = Math.min(Math.max(ref.startOffset, 0), len);
-                            let acc = 0;
-                            for (let i = 0; i < paragraphs.length; i++) {
-                              const next = acc + paragraphs[i].length + (i < paragraphs.length - 1 ? 2 : 0);
-                              if (pos <= next) { targetIdx = i; break; }
-                              acc = next;
-                            }
-                          }
-                          if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
-                          refGroups[targetIdx].push(refId);
-                        });
-                      }
-                    }
-
-                    const renderRefBlock = (refId: string) => {
-                      const ref = references[refId];
-                      if (!ref) return null;
-                      let refStart = typeof ref.startOffset === 'number' ? ref.startOffset : -1;
-                      let refEnd = typeof ref.endOffset === 'number' ? ref.endOffset : -1;
-                      const useCurrentBook = !ref.bookId || ref.bookId === id;
-                      const sourceContent = useCurrentBook ? bookContent : referencedBooks[ref.bookId!]?.content;
-                      const sourceChunks = useCurrentBook ? contentChunks : referencedBooks[ref.bookId!]?.chunks || [];
-                      const sourceStarts = useCurrentBook ? chunkStartOffsets : referencedBooks[ref.bookId!]?.chunkStarts || [];
-                      if (refStart < 0 && ref.content && sourceContent) {
-                        const idx = sourceContent.indexOf(ref.content);
-                        if (idx >= 0) {
-                          refStart = idx;
-                          refEnd = idx + ref.content.length;
-                        }
-                      }
-                      if (refStart < 0 || refEnd <= refStart) {
-                        return (
-                          <div className="text-xs text-amber-700">Unable to locate reference range in the book content.</div>
-                        );
-                      }
-                      const pagesToRender: number[] = [];
-                      for (let i = 0; i < sourceChunks.length; i++) {
-                        const cStart = sourceStarts[i] ?? 0;
-                        const cEnd = cStart + sourceChunks[i].content.length;
-                        if (refStart < cEnd && refEnd > cStart) {
-                          pagesToRender.push(i);
-                        }
-                        if (cStart > refEnd) break;
-                      }
-                      return (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className={`rounded-lg p-3 ${
-                            message.type === 'user' 
-                              ? 'bg-gray-200 text-gray-800 border border-gray-300' 
-                              : 'bg-gray-200 text-gray-800 border border-gray-300'
-                          }`}
-                        >
-                          <div className="text-sm mb-2 text-gray-700">
-                            {ref.chapter && <strong>{ref.chapter}</strong>}
-                            {ref.page && <span className="ml-2 text-amber-600">(Page {ref.page})</span>}
-                            {!useCurrentBook && ref.bookId && <span className="ml-2 text-gray-500">[{referencedBooks[ref.bookId]?.title || ref.bookId}]</span>}
-                          </div>
-                          <div className="max-h-80 overflow-y-auto">
-                            {pagesToRender.map((pi) => {
-                              const chunk = sourceChunks[pi];
-                              const cStart = sourceStarts[pi] ?? 0;
-                              const html = highlightRangeInChunk(chunk.content, cStart, refStart, refEnd);
-                              return (
-                                <div key={chunk.id} className="p-3 border-b last:border-b-0 border-gray-300">
-                                  <div className="text-xs mb-2 text-gray-500">Page {chunk.page}{chunk.chapter ? ` • ${chunk.chapter}` : ''}</div>
-                                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-gray-700" dangerouslySetInnerHTML={{ __html: html }} />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </motion.div>
-                      );
-                    };
-
-                    return (
+                  chatMessages.map((message) => (
+                    <div key={message.id} className="space-y-2">
                       <ChatMessageComponent
-                        key={message.id}
                         message={message}
+                        showReferences={showReferences}
+                        references={references}
+                        onToggleReferences={toggleReferences}
                         isFullscreen={isFullscreen}
-                        refGroups={refGroups}
-                        openRefMessageId={openRefMessageId}
-                        openRefId={openRefId}
-                        onToggleRef={toggleRef}
-                        renderRefBlock={renderRefBlock}
+                        onNavigateToReference={navigateToReference}
                       />
-                    );
-                  })
+
+                      {/* Inline scrollable pages with highlighted ranges */}
+                      <AnimatePresence>
+                        {showReferences === message.id && message.references && message.references.length > 0 && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="bg-amber-50 border border-amber-200 rounded-lg p-3"
+                          >
+                            <h4 className="font-semibold text-amber-900 mb-2 text-sm">References</h4>
+                            <div className="space-y-4">
+                              {message.references.map((refId) => {
+                                const ref = references[refId];
+                                if (!ref) return null;
+
+                                // Determine offsets to highlight
+                                let refStart = typeof ref.startOffset === 'number' ? ref.startOffset : -1;
+                                let refEnd = typeof ref.endOffset === 'number' ? ref.endOffset : -1;
+                                // Select the correct book content/chunks depending on ref.bookId
+                                const useCurrentBook = !ref.bookId || ref.bookId === id;
+                                const sourceContent = useCurrentBook ? bookContent : referencedBooks[ref.bookId!]?.content;
+                                const sourceChunks = useCurrentBook ? contentChunks : referencedBooks[ref.bookId!]?.chunks || [];
+                                const sourceStarts = useCurrentBook ? chunkStartOffsets : referencedBooks[ref.bookId!]?.chunkStarts || [];
+
+                                if (refStart < 0 && ref.content && sourceContent) {
+                                  const idx = sourceContent.indexOf(ref.content);
+                                  if (idx >= 0) {
+                                    refStart = idx;
+                                    refEnd = idx + ref.content.length;
+                                  }
+                                }
+
+                                if (refStart < 0 || refEnd <= refStart) {
+                                  return (
+                                    <div key={refId} className="text-xs text-amber-800">
+                                      Unable to locate reference range in the book content.
+                                    </div>
+                                  );
+                                }
+
+                                // Find which chunks (pages) intersect the reference range
+                                const pagesToRender: number[] = [];
+                                for (let i = 0; i < sourceChunks.length; i++) {
+                                  const cStart = sourceStarts[i] ?? 0;
+                                  const cEnd = cStart + sourceChunks[i].content.length;
+                                  if (refStart < cEnd && refEnd > cStart) {
+                                    pagesToRender.push(i);
+                                  }
+                                  if (cStart > refEnd) break;
+                                }
+
+                                return (
+                                  <div key={refId} className="border border-amber-200 rounded-md bg-white">
+                                    <div className="px-3 py-2 border-b border-amber-200 text-sm text-amber-900 flex items-center justify-between">
+                                      <div>
+                                        {ref.chapter && <strong>{ref.chapter}</strong>}
+                                        {ref.page && <span className="ml-2 text-amber-700">(Page {ref.page})</span>}
+                                        {!useCurrentBook && ref.bookId && <span className="ml-2 text-gray-600">[{referencedBooks[ref.bookId]?.title || ref.bookId}]</span>}
+                                      </div>
+                                    </div>
+                                    <div className="max-h-80 overflow-y-auto">
+                                      {pagesToRender.map((pi) => {
+                                        const chunk = sourceChunks[pi];
+                                        const cStart = sourceStarts[pi] ?? 0;
+                                        const html = highlightRangeInChunk(chunk.content, cStart, refStart, refEnd);
+                                        return (
+                                          <div key={chunk.id} className="p-3 border-b last:border-b-0 border-gray-100">
+                                            <div className="text-xs text-gray-500 mb-2">Page {chunk.page}{chunk.chapter ? ` • ${chunk.chapter}` : ''}</div>
+                                            <div
+                                              className="text-sm leading-relaxed whitespace-pre-wrap"
+                                              dangerouslySetInnerHTML={{ __html: html }}
+                                            />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  ))
                 )}
 
                 {/* Removed global references section; references now render inline per message */}
@@ -1534,72 +1619,6 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
       </div>
 
 
-      {/* Page Selector Modal */}
-      <AnimatePresence>
-        {showPageSelector && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            onClick={() => setShowPageSelector(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-xl p-6 w-80 max-w-sm mx-4"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900">Go to Section</h3>
-                <button
-                  onClick={() => setShowPageSelector(false)}
-                  className="p-1 hover:bg-gray-100 rounded transition-colors"
-                >
-                  <X className="h-5 w-5 text-gray-600" />
-                </button>
-              </div>
-              
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Enter section number (1-{totalPages})
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max={totalPages}
-                    value={pageInput}
-                    onChange={(e) => setPageInput(e.target.value)}
-                    onKeyPress={handlePageInputKeyPress}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                    placeholder={`1-${totalPages}`}
-                    autoFocus
-                  />
-                </div>
-                
-                <div className="flex justify-end space-x-2">
-                  <button
-                    onClick={() => setShowPageSelector(false)}
-                    className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handlePageSelect}
-                    disabled={!pageInput || parseInt(pageInput) < 1 || parseInt(pageInput) > totalPages}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Go
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }
-

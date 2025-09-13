@@ -76,3 +76,13 @@ body {
 .focus-ring {
   @apply focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2;
 }
+
+/* Hide Next.js development indicator (the small "N" logo) */
+#__next-build-watcher,
+[data-nextjs-build-watcher],
+.nextjs-container-build-indicator,
+[data-nextjs-container-build-indicator],
+div[style*="position: fixed"][style*="bottom"][style*="left"],
+div[style*="position:fixed"][style*="bottom"][style*="left"] {
+  display: none !important;
+}
