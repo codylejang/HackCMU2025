@@ -51,6 +51,39 @@ class AskResponse(BaseModel):
     question: str = Field(..., description="Original question")
 
 
+class ChunkAskRequest(BaseModel):
+    question: str = Field(..., min_length=1, description="Question to ask the knowledge base")
+    model_id: str = Field(..., min_length=1, description="Model ID to use for generating the answer")
+    search_sources: bool = Field(True, description="Include sources in search")
+    search_notes: bool = Field(True, description="Include notes in search")
+    limit: int = Field(10, ge=1, le=10000, description="Maximum number of search results")
+    minimum_score: float = Field(0.0, ge=0.0, le=1.0, description="Minimum similarity score for vector search")
+
+
+class SearchChunk(BaseModel):
+    id: str = Field(..., description="Unique identifier for the chunk")
+    text: str = Field(..., description="Text content of the chunk")
+
+
+class VectorSearchResult(BaseModel):
+    id: str = Field(..., description="Result ID")
+    content: List[str] = Field(..., description="Content text")
+    source_id: Optional[str] = Field(None, description="Source ID if applicable")
+    title: Optional[str] = Field(None, description="Title of the source if applicable")
+    score: Optional[float] = Field(None, description="Similarity score")
+
+
+class ChunkAskResponse(BaseModel):
+    answer: str = Field(..., description="AI-generated answer with chunk citations")
+    question: str = Field(..., description="Original question")
+    chunks_used: list[SearchChunk] = Field(..., description="Chunks that were used in generating the answer")
+    vector_search_results: list[VectorSearchResult] = Field(..., description="Raw vector search results")
+    search_count: int = Field(..., description="Number of search results found")
+    formatted_search_results: str = Field(..., description="Formatted search results sent to AI")
+    raw_search_results: list = Field(..., description="Raw unprocessed search results for debugging")
+    prompt_sent_to_llm: str = Field(..., description="The complete prompt that was sent to the LLM model")
+
+
 # Models API models
 class ModelCreate(BaseModel):
     name: str = Field(..., description="Model name (e.g., gpt-4o-mini, claude, gemini)")

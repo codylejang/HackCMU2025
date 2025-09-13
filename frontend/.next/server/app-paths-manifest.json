@@ -1,5 +1,7 @@
 {
   "/api/books/route": "app/api/books/route.js",
+  "/api/covers/[filename]/route": "app/api/covers/[filename]/route.js",
+  "/backend/page": "app/backend/page.js",
   "/favicon.ico/route": "app/favicon.ico/route.js",
   "/page": "app/page.js"
 }
