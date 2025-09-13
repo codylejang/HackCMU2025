@@ -112,7 +112,7 @@ const ChatMessageComponent = memo(({
                                 <ChevronRight className="h-3 w-3" />
                               )}
                             </span>
-                            <span>Reference</span>
+                            <span>Reference ({refGroups[idx].length})</span>
                           </button>
                         ))}
                       </div>
@@ -436,41 +436,80 @@ export default function ReaderPage({ params }: { params: Promise<{ id: string }>
     const loadBook = async () => {
       setIsProcessing(true);
       try {
-        // Add a test message with multiple references for debugging
+        // Add a test message with multiple references per paragraph and different books
         const testRefs: Reference[] = [
+          // First paragraph - 2 references from current book
           {
-            id: 'ref-para-1',
+            id: 'ref-para-1a',
             content: 'answering',
-            chapter: 'Test Chapter',
+            chapter: 'Current Book Chapter 1',
             page: 1,
             startOffset: 10,
             endOffset: 20,
             bookId: id
           },
           {
-            id: 'ref-para-2',
-            content: 'elaborates',
-            chapter: 'Test Chapter',
-            page: 1,
-            startOffset: 60,
-            endOffset: 70,
+            id: 'ref-para-1b',
+            content: 'something',
+            chapter: 'Current Book Chapter 2',
+            page: 3,
+            startOffset: 50,
+            endOffset: 60,
             bookId: id
           },
+          // Second paragraph - 2 references from different book
           {
-            id: 'ref-para-3',
-            content: 'concludes',
-            chapter: 'Test Chapter',
+            id: 'ref-para-2a',
+            content: 'elaborates',
+            chapter: 'Other Book Chapter 1',
             page: 1,
+            startOffset: 30,
+            endOffset: 40,
+            bookId: 'other-book-123'
+          },
+          {
+            id: 'ref-para-2b',
+            content: 'further',
+            chapter: 'Other Book Chapter 2',
+            page: 5,
+            startOffset: 80,
+            endOffset: 90,
+            bookId: 'other-book-123'
+          },
+          // Third paragraph - 3 references from different books
+          {
+            id: 'ref-para-3a',
+            content: 'concludes',
+            chapter: 'Current Book Chapter 3',
+            page: 2,
             startOffset: 110,
             endOffset: 120,
             bookId: id
+          },
+          {
+            id: 'ref-para-3b',
+            content: 'thought',
+            chapter: 'Third Book Chapter 1',
+            page: 1,
+            startOffset: 25,
+            endOffset: 35,
+            bookId: 'third-book-456'
+          },
+          {
+            id: 'ref-para-3c',
+            content: 'analysis',
+            chapter: 'Other Book Chapter 3',
+            page: 7,
+            startOffset: 150,
+            endOffset: 160,
+            bookId: 'other-book-123'
           }
         ];
 
         const testMessage: ChatMessage = {
           id: 'test-message',
           type: 'assistant',
-          content: 'Para one answering something.\n\nPara two that elaborates further.\n\nPara three concludes the thought.',
+          content: 'Para one answering something with multiple references.\n\nPara two that elaborates further with cross-book citations.\n\nPara three concludes the thought with comprehensive analysis.',
           timestamp: new Date(),
           references: testRefs.map(r => r.id)
         };
@@ -1264,27 +1303,39 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
                   </div>
                 ) : (
                   chatMessages.map((message) => {
-                    // Group references by paragraph index: naive approach split by paragraphs length proportion
+                    // Group references by paragraph index: manual assignment for testing
                     const refGroups: Record<number, string[]> = {};
                     if (message.references && message.references.length) {
                       const paragraphs = message.content.split(/\n{2,}/);
-                      message.references.forEach((refId) => {
-                        const ref = references[refId];
-                        let targetIdx = paragraphs.length - 1;
-                        if (ref && typeof ref.startOffset === 'number' && typeof ref.endOffset === 'number') {
-                          // Distribute by position in full content if available (fallback to last paragraph)
-                          const len = message.content.length;
-                          const pos = Math.min(Math.max(ref.startOffset, 0), len);
-                          let acc = 0;
-                          for (let i = 0; i < paragraphs.length; i++) {
-                            const next = acc + paragraphs[i].length + (i < paragraphs.length - 1 ? 2 : 0);
-                            if (pos <= next) { targetIdx = i; break; }
-                            acc = next;
+                      
+                      // For test message, manually assign references to paragraphs
+                      if (message.id === 'test-message') {
+                        // First paragraph: ref-para-1a, ref-para-1b
+                        refGroups[0] = ['ref-para-1a', 'ref-para-1b'];
+                        // Second paragraph: ref-para-2a, ref-para-2b  
+                        refGroups[1] = ['ref-para-2a', 'ref-para-2b'];
+                        // Third paragraph: ref-para-3a, ref-para-3b, ref-para-3c
+                        refGroups[2] = ['ref-para-3a', 'ref-para-3b', 'ref-para-3c'];
+                      } else {
+                        // For other messages, use the original distribution logic
+                        message.references.forEach((refId) => {
+                          const ref = references[refId];
+                          let targetIdx = paragraphs.length - 1;
+                          if (ref && typeof ref.startOffset === 'number' && typeof ref.endOffset === 'number') {
+                            // Distribute by position in full content if available (fallback to last paragraph)
+                            const len = message.content.length;
+                            const pos = Math.min(Math.max(ref.startOffset, 0), len);
+                            let acc = 0;
+                            for (let i = 0; i < paragraphs.length; i++) {
+                              const next = acc + paragraphs[i].length + (i < paragraphs.length - 1 ? 2 : 0);
+                              if (pos <= next) { targetIdx = i; break; }
+                              acc = next;
+                            }
                           }
-                        }
-                        if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
-                        refGroups[targetIdx].push(refId);
-                      });
+                          if (!refGroups[targetIdx]) refGroups[targetIdx] = [];
+                          refGroups[targetIdx].push(refId);
+                        });
+                      }
                     }
 
                     const renderRefBlock = (refId: string) => {
@@ -1551,3 +1602,4 @@ Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatib
     </div>
   );
 }
+
