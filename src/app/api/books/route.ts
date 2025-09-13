@@ -90,7 +90,8 @@ export async function POST(request: NextRequest) {
       filePath: uploadResult.filePath!,
       coverPath: uploadResult.coverPath || '', // Fallback for failed cover generation
       fileSize: file.size,
-      content
+      content,
+      currentPage: 1 // Initialize to page 1
     };
 
     // Save to database
